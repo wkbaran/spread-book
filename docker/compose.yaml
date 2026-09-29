@@ -10,13 +10,8 @@ services:
     restart: unless-stopped
     env_file: .env
     volumes:
-      - data:/app/data
-      - reports:/app/reports
-
-# Pinned to the names created under the old optionspread-heatmaps project, so
-# the rename keeps the existing downloads and report history.
-volumes:
-  data:
-    name: optionspread-heatmaps_data
-  reports:
-    name: optionspread-heatmaps_reports
+      # Absolute paths on the Docker host (nuc1). Compose expands "~" on the
+      # machine running it, which with `docker -H ssh://...` is the client, not
+      # the host. ":z" relabels for SELinux, which is enforcing on nuc1.
+      - /var/home/core/spread-book/data:/app/data:z
+      - /var/home/core/spread-book/reports:/app/reports:z

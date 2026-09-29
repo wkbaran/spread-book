@@ -122,11 +122,11 @@ The `docker/` directory runs `publish.sh` on a schedule, publishing to the S3 bu
 | File | Purpose |
 |---|---|
 | `docker/Dockerfile` | Node 24 Alpine image with the AWS CLI and supercronic |
-| `docker/compose.yaml` | Runs the container; `data/` and `reports/` live in named volumes |
+| `docker/compose.yaml` | Runs the container; `data/` and `reports/` are bind-mounted from `~/spread-book/` on the Docker host |
 | `docker/crontab` | 7:45 AM and 1:25 PM Mountain, weekdays |
 | `docker/.env.example` | Template for `docker/.env` (OptionStrat and AWS credentials) |
 
-The container runs with `TZ=America/Denver`, so the crontab is in local time and DST is handled automatically. The volumes persist between runs, so `daily-pnl.js` always has an earlier snapshot to compare against.
+The container runs with `TZ=America/Denver`, so the crontab is in local time and DST is handled automatically. The bind-mounted directories persist between runs, so `daily-pnl.js` always has an earlier snapshot to compare against.
 
 ```bash
 cp docker/.env.example docker/.env      # fill in credentials
