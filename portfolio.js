@@ -256,6 +256,7 @@ ${asset('report.css')}
 </main>
 
 <script type="application/json" id="book-data">${embedJSON(snapshot)}</script>
+<script>${asset('book.js')}</script>
 <script>${asset('report.js')}</script>
 </body>
 </html>`;

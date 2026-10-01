@@ -95,6 +95,22 @@ Each report is one self-contained HTML page. It embeds its snapshot as JSON, and
   </tr>
 </table>
 
+## The brief for agents
+
+`latest.json`, next to `index.html` on the site, is the newest report as one JSON file for an LLM agent to read, such as a morning check before the market opens. It is rewritten every run and served with `no-cache`.
+
+| Field | What it holds |
+|---|---|
+| `rules`, `glossary` | The exit thresholds and what each field means, so an agent doesn't have to guess |
+| `summary` | Counts for each decision list, plus the spreads closest to the target and to the stop |
+| `decisions` | `readyToClose`, `atStop`, `inRollWindow` and `gettingClose`, in the same order as the report |
+| `totals`, `concentration` | Book greeks, then greeks and theta share by underlying and by expiration |
+| `pnl` | Attribution since the previous run: totals, the biggest movers, and spreads opened or closed |
+| `positions` | Every spread with its derived numbers, nearest expiration first |
+| `links` | The HTML report, full snapshot and P&L JSON, relative to `latest.json` |
+
+The decision lists come from `book.js`, the same code the report page runs, so the two always agree. Each run also keeps its own copy as `<base>-brief.json`.
+
 ## Scripts
 
 | Script | Input | Output |
@@ -103,8 +119,10 @@ Each report is one self-contained HTML page. It embeds its snapshot as JSON, and
 | `publish.sh` | — | `run.sh`, then upload to S3, regenerate the index and invalidate CloudFront |
 | `download.js` | `.env` | `data/*.csv` (exports Group: Live from OptionStrat, converts xlsx → CSV) |
 | `portfolio.js <csv>` | CSV file | `reports/*-portfolio.html`, `*-portfolio.json` and `*-prices.json` |
-| `daily-pnl.js` | Two newest snapshots | `reports/*-daily-pnl.html`, P&L attribution between runs |
+| `daily-pnl.js` | Two newest snapshots | `reports/*-daily-pnl.html` and `<base>-pnl.json`, P&L attribution between runs |
+| `brief.js` | Newest snapshot and its P&L | `reports/<base>-brief.json` and `latest.json`, the [brief for agents](#the-brief-for-agents) |
 | `generate-index.js` | File list | `reports/index.html`, `archive.html`, `snapshots.json` |
+| `book.js` | — | Exit rules and derived numbers, shared by `report.js` and `brief.js` |
 | `report.js`, `report.css`, `theme.css`, `palette.js` | — | Inlined into every report |
 | `index.js`, `whatif.js` | CSV file | The legacy heatmaps report |
 

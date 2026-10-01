@@ -8,9 +8,9 @@
 (() => {
   "use strict";
 
-  const TARGET = 50; // close winners at 50% of max profit
-  const STOP = 25; // close losers when the loss reaches 25% of max loss
-  const ROLL_DAYS = 21; // close or roll inside this many days
+  const SB = globalThis.SpreadBook; // book.js, inlined ahead of this script
+  const { target: TARGET, stop: STOP, rollDays: ROLL_DAYS } = SB.RULES;
+  const takenAt = SB.takenAt;
 
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
@@ -26,29 +26,6 @@
   const exitPct = (p) => (p.returnPct >= 0 ? pct(p.returnPct) : "−" + p.lossOfMax.toFixed(1) + "%");
   const exitLong = (p) => (p.returnPct >= 0 ? `${pct(p.returnPct)} of max profit` : `${p.lossOfMax.toFixed(1)}% of max loss`);
 
-  // "4/17/26 14:00" or "2026-04-17" → "2026-04-17"
-  function isoDate(s) {
-    const m = String(s || "").match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
-    if (!m) return String(s || "").slice(0, 10);
-    return `${m[3].length === 2 ? "20" + m[3] : m[3]}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`;
-  }
-
-  // When the snapshot was taken. The source CSV's name carries it in Mountain time (download.js
-  // stamps it that way). Older JSON files were backfilled or read the stamp as UTC, so their
-  // generatedAt can't be trusted.
-  function fromDenver(date, hh, mm) {
-    const guess = new Date(`${date}T${hh}:${mm}:00Z`);
-    const off = new Intl.DateTimeFormat("en-US", { timeZone: "America/Denver", timeZoneName: "longOffset" })
-      .formatToParts(guess).find((p) => p.type === "timeZoneName").value; // e.g. "GMT-06:00"
-    const m = off.match(/([+-])(\d{2}):(\d{2})/);
-    const mins = m ? (m[1] === "-" ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3])) : 0;
-    return new Date(guess.getTime() - mins * 60000);
-  }
-  function takenAt(s) {
-    const m = String(s.source || "").match(/(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})/);
-    return m ? fromDenver(m[1], m[2], m[3]).toISOString() : s.generatedAt;
-  }
-
   // ---- state ---------------------------------------------------------------
   const embedded = JSON.parse($("book-data").textContent);
   const embeddedBase = document.body.dataset.base;
@@ -62,29 +39,9 @@
 
   function enrich(p, id) {
     p.id = id;
-    p.expiration = isoDate(p.expiration);
-    p.strikes = (p.name.match(/[\d.]+\/[\d.]+/) || [""])[0];
-    p.kind = p.type === "Bull Put" ? "put" : p.type === "Bear Call" ? "call" : "other";
-    // Count days from the snapshot's Mountain-time calendar date, the same clock as the filenames.
-    const snapDate = new Date(takenAt(snap)).toLocaleDateString("sv", { timeZone: "America/Denver" });
-    const snapDay = Date.UTC(...snapDate.split("-").map((n, i) => (i === 1 ? n - 1 : +n)));
-    const [y, mo, d] = p.expiration.split("-").map(Number);
-    p.dte = Math.round((Date.UTC(y, mo - 1, d) - snapDay) / 864e5);
-    p.tg = p.gamma ? p.theta / Math.abs(p.gamma) : null;
-    p.tv = p.vega ? p.theta / Math.abs(p.vega) : null;
-    p.ev = p.chance * p.maxProfit - (1 - p.chance) * p.maxLoss;
-    // Same formula as lossOfRisk in portfolio.js, as a positive share.
-    p.lossOfMax = p.returnPct < 0 && p.maxLoss > 0 ? ((-p.returnPct / 100) * p.maxProfit / p.maxLoss) * 100 : 0;
-    p.toward = p.returnPct >= 0 ? Math.min(1, p.returnPct / TARGET) : -Math.min(1, p.lossOfMax / STOP);
-    p.exit = p.returnPct >= TARGET ? "close" : p.lossOfMax >= STOP ? "stop" : "";
-    return p;
+    return SB.enrich(p, snap);
   }
-  // A bull put and a bear call on the same underlying and expiration are an iron condor.
-  function tagCondors(list) {
-    for (const p of list) {
-      p.condor = list.some((o) => o !== p && o.underlying === p.underlying && o.expiration === p.expiration && o.kind !== p.kind && o.kind !== "other" && p.kind !== "other");
-    }
-  }
+  const tagCondors = SB.tagCondors;
   const all = () => [...base, ...hypos];
 
   function useSnapshot(s) {
@@ -133,10 +90,7 @@
       const shown = rows.slice(0, 6), more = rows.length - shown.length;
       return `<section><h2>${title}</h2><p class="d-help">${help}</p>${rows.length ? `<ul>${shown.join("")}</ul>${more ? `<p class="empty">and ${more} more in the scorecard</p>` : ""}` : `<p class="empty">${empty}</p>`}</section>`;
     };
-    const ready = list.filter((p) => p.exit === "close").sort((a, b) => b.returnPct - a.returnPct);
-    const stopped = list.filter((p) => p.exit === "stop").sort((a, b) => b.lossOfMax - a.lossOfMax);
-    const soon = list.filter((p) => !p.exit && p.dte <= ROLL_DAYS).sort((a, b) => a.dte - b.dte);
-    const near = list.filter((p) => !p.exit && p.dte > ROLL_DAYS && Math.abs(p.toward) >= 0.6).sort((a, b) => Math.abs(b.toward) - Math.abs(a.toward));
+    const { ready, stopped, soon, near } = SB.decide(list);
     const best = [...list].sort((a, b) => b.returnPct - a.returnPct)[0];
     const worst = [...list].sort((a, b) => b.lossOfMax - a.lossOfMax)[0];
     $("decide").innerHTML =
@@ -145,7 +99,7 @@
       block("At the stop", `Loss has reached ${STOP}% of max loss.`, stopped.map((p) => item(p, exitPct(p), true, exitLong(p))),
         worst && worst.lossOfMax > 0 ? `None. Worst is ${esc(worst.underlying)} at ${worst.lossOfMax.toFixed(1)}% of max loss.` : "Nothing is losing.") +
       block(`${ROLL_DAYS} days or less`, "Close or roll before gamma speeds up.", soon.map((p) => item(p, exitPct(p), false, exitLong(p))), `Nothing expires within ${ROLL_DAYS} days.`) +
-      block("Getting close", "Past 60% of the way to either exit.", near.map((p) => item(p, exitPct(p), false, exitLong(p))), "Everything else is in the middle.");
+      block("Getting close", `Past ${SB.RULES.near * 100}% of the way to either exit.`, near.map((p) => item(p, exitPct(p), false, exitLong(p))), "Everything else is in the middle.");
   }
   $("decide").addEventListener("click", (e) => { const b = e.target.closest("[data-id]"); if (b) select(b.dataset.id, true); });
 

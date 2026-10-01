@@ -596,6 +596,41 @@ function fmtSpot(v) {
   const outFile = path.join(reportsDir, `${stamp}-daily-pnl.html`);
   fs.writeFileSync(outFile, html);
   console.log(`\nWrote → ${outFile}`);
+
+  // Same attribution as JSON, named after the newer portfolio snapshot so brief.js can find it.
+  const r2 = v => v === null ? null : Math.round(v * 100) / 100;
+  const nowFile = snapNow === snap1 ? todayFile : yesterdayFile;
+  const prevFile = snapNow === snap1 ? yesterdayFile : todayFile;
+  const jsonOut = nowFile.replace(/-portfolio\.json$/, '-pnl.json');
+  if (jsonOut === nowFile) return; // not a portfolio snapshot name; don't overwrite the input
+  fs.writeFileSync(jsonOut, JSON.stringify({
+    from:        tsPrev.toISOString(),
+    to:          tsNow.toISOString(),
+    days:        Math.round(daysElapsed * 1000) / 1000,
+    previous:    path.basename(prevFile),
+    priceSource,
+    totals: {
+      pnl:        r2(totalPnL),
+      theta:      r2(totalTheta),
+      delta:      hasPricesGlobally ? r2(totalDelta) : null,
+      gamma:      hasPricesGlobally ? r2(totalGamma) : null,
+      vegaOther:  hasPricesGlobally ? r2(totalVega)  : null,
+      // Held positions without a price move: everything except theta, unattributed
+      unattributed: r2(moveNoPx),
+      unattributedPositions: noPxCount,
+    },
+    counts: {
+      held:   held.length,
+      new:    rows.filter(r => r.status === 'new').length,
+      closed: rows.filter(r => r.status === 'closed').length,
+    },
+    positions: rows.map(r => ({
+      name: r.name, underlying: r.underlying, expiration: r.expiration, type: r.type, status: r.status,
+      prevReturnPct: r.prevReturnPct, currReturnPct: r.currReturnPct, spotMove: r2(r.spotDelta),
+      pnl: r2(r.totalPnL), theta: r2(r.thetaPnL), delta: r2(r.deltaPnL), gamma: r2(r.gammaPnL), vegaOther: r2(r.vegaPnL),
+    })),
+  }, null, 2));
+  console.log(`Wrote → ${jsonOut}`);
   console.log(`Period  : ${fmtTs(tsPrev)} → ${fmtTs(tsNow)} (${daysLabel})`);
   console.log(`Held    : ${held.length}  New: ${rows.filter(r=>r.status==='new').length}  Closed: ${rows.filter(r=>r.status==='closed').length}`);
   console.log(`P&L     : Total ${fmtD(totalPnL)}  |  Θ ${fmtD(totalTheta)}  |  Δ ${hasPricesGlobally ? fmtD(totalDelta) : 'N/A'}  |  Γ ${hasPricesGlobally ? fmtD(totalGamma) : 'N/A'}  |  V+other ${hasPricesGlobally ? fmtD(totalVega) : 'N/A'}`);
