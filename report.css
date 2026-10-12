@@ -27,7 +27,7 @@
 .chip button { padding: 0 0.4rem; border: 0; background: transparent; font-size: 0.95rem; line-height: 1.2; }
 
 /* ---- book strip: totals that switch the grid ------------------------ */
-.book { display: grid; grid-template-columns: repeat(4, 1fr); margin-top: 1.25rem; border: 1px solid var(--line); border-radius: var(--radius-m); overflow: hidden; }
+.book { display: grid; grid-template-columns: repeat(5, 1fr); margin-top: 1.25rem; border: 1px solid var(--line); border-radius: var(--radius-m); overflow: hidden; }
 .greek {
   all: unset; box-sizing: border-box; cursor: pointer; display: grid; gap: 0.1rem; align-content: start;
   padding: 0.95rem 1.1rem 1rem; background: var(--surface); position: relative;
@@ -85,6 +85,7 @@ table { border-collapse: collapse; width: 100%; }
   font-stretch: 80%; cursor: pointer; border-radius: 3px;
 }
 .cell.none { cursor: default; }
+.cell.nobeta { color: var(--muted); box-shadow: inset 0 0 0 1px var(--line-strong); }
 .cell:focus-visible, .cell.sel { outline: 2px solid var(--ink); outline-offset: -2px; }
 .cell.hypo { outline: 2px dashed var(--signal); outline-offset: -3px; }
 .heat .tot { text-align: right; padding: 0.3rem 0.55rem; font-stretch: 80%; font-weight: 650; }
@@ -174,15 +175,16 @@ dl.kv .watch { color: var(--signal); }
 
 @media (max-width: 1100px) {
   .decide { grid-template-columns: repeat(2, 1fr); }
+  .book { grid-template-columns: repeat(2, 1fr); }
+  .greek:nth-child(3), .greek:nth-child(5) { border-left: 0; }
+  .greek:nth-child(5) { grid-column: 1 / -1; }
+  .greek:nth-child(n+3) { border-top: 1px solid var(--line); }
 }
 @media (max-width: 1040px) {
   .split, .quality { grid-template-columns: 1fr; }
   .detail { position: static; }
 }
 @media (max-width: 720px) {
-  .book { grid-template-columns: repeat(2, 1fr); }
-  .greek:nth-child(3) { border-left: 0; }
-  .greek:nth-child(n+3) { border-top: 1px solid var(--line); }
   .greek .g-val { font-size: 2.4rem; }
   .decide { grid-template-columns: 1fr; }
   .heat-scroll { overflow-x: auto; }

@@ -64,22 +64,25 @@
     delta: { name: "Delta", unit: "", help: "Net direction. Positive gains if the market rises.", title: "Delta by underlying and expiration", note: "Bright cells lean bullish, dark cells lean bearish. The total row shows how hard each expiration leans.", dp: 1, diverging: true },
     gamma: { name: "Gamma", unit: "", help: "How quickly delta turns against you in a big move.", title: "Gamma by underlying and expiration", note: "Brighter cells lose faster in a sharp move either way. Gamma climbs as expiration nears, so watch the nearest column.", dp: 2 },
     vega: { name: "Vega", unit: "per IV point", help: "What the book loses if implied volatility rises one point.", title: "Vega by underlying and expiration", note: "Brighter cells lose more in a volatility spike. Longer-dated spreads usually carry more.", dp: 2 },
+    bwDelta: { name: "Beta-weighted delta", unit: "SPY shares", help: "How many shares of SPY the book behaves like. Positive gains if the market rises.", title: "Beta-weighted delta by underlying and expiration", note: "Delta turned into SPY shares so different stocks can be compared. Bright cells lean bullish, dark cells lean bearish. The total row shows how hard each expiration leans on the market.", dp: 1, diverging: true },
   };
 
-  // The spreads with a beta-weighted delta add up; the line says how many that is.
-  function bwLine() {
-    const list = all(), have = list.filter((p) => p.bwDelta !== null);
-    if (!have.length) return `<span class="g-bw none" title="${BW_HELP}">Beta-weighted: not available</span>`;
-    const part = have.length < list.length ? ` (${have.length} of ${list.length})` : "";
-    return `<span class="g-bw" title="${BW_HELP}">Beta-weighted ${signed(sum(have, "bwDelta"), 1)} SPY shares${part}</span>`;
-  }
+  // A spread without a beta has no beta-weighted delta (null). It is left out of every sum for that view
+  // and shown as a dash, so a total never looks more complete than it is.
+  const counts = (p, k) => p[k] !== null && p[k] !== undefined;
+  const addUp = (ps, k) => sum(ps.filter((p) => counts(p, k)), k);
+  const totalText = (ps, k, dp) => (ps.some((p) => counts(p, k)) ? fmt(addUp(ps, k), dp) : "—");
+
   function renderBook() {
+    const list = all();
     $("book").innerHTML = Object.entries(GREEKS).map(([k, g], i) => {
-      const total = sum(all(), k), diff = sum(hypos, k);
+      const have = list.filter((p) => counts(p, k));
+      const diff = addUp(hypos, k);
+      const cover = have.length === list.length ? "" : `<span class="g-bw ${have.length ? "" : "none"}">${have.length ? `${have.length} of ${list.length} spreads have a beta` : "No betas available"}</span>`;
       return `<button class="greek" type="button" data-g="${k}" aria-pressed="${k === greek}" title="Press ${i + 1}">
         <span class="g-name">${g.name}${g.unit ? " " + g.unit : ""}</span>
-        <span class="g-val">${fmt(total, g.dp)}${hypos.length ? `<span class="g-diff">${signed(diff, g.dp)}</span>` : ""}</span>
-        ${k === "delta" ? bwLine() : ""}
+        <span class="g-val">${totalText(list, k, g.dp)}${hypos.some((p) => counts(p, k)) ? `<span class="g-diff">${signed(diff, g.dp)}</span>` : ""}</span>
+        ${cover}
         <span class="g-help">${g.help}</span></button>`;
     }).join("");
   }
@@ -89,7 +92,7 @@
   });
   document.addEventListener("keydown", (e) => {
     if (e.target.matches("textarea, input, select") || e.metaKey || e.ctrlKey || e.altKey) return;
-    const k = { 1: "theta", 2: "delta", 3: "gamma", 4: "vega" }[e.key];
+    const k = { 1: "theta", 2: "delta", 3: "gamma", 4: "vega", 5: "bwDelta" }[e.key];
     if (k) { greek = k; render(); }
   });
 
@@ -129,12 +132,15 @@
     const g = GREEKS[greek], list = all();
     const exps = [...new Set(list.map((p) => p.expiration))].sort();
     const rows = [...new Set(list.map((p) => p.underlying + "|" + p.kind))].map((k) => { const [u, kind] = k.split("|"); return { u, kind, ps: list.filter((p) => p.underlying === u && p.kind === kind) }; });
-    rows.forEach((r) => (r.total = sum(r.ps, greek)));
-    rows.sort((a, b) => (g.diverging ? b.total - a.total : Math.abs(b.total) - Math.abs(a.total)));
-    const cellVals = rows.flatMap((r) => exps.map((e) => sum(r.ps.filter((p) => p.expiration === e), greek)));
+    rows.forEach((r) => (r.total = addUp(r.ps, greek)));
+    rows.forEach((r) => (r.has = r.ps.some((p) => counts(p, greek))));
+    // Rows with nothing to add (no beta) go last, not in the middle at zero.
+    rows.sort((a, b) => (a.has !== b.has ? (a.has ? -1 : 1) : g.diverging ? b.total - a.total : Math.abs(b.total) - Math.abs(a.total)));
+    const cellVals = rows.flatMap((r) => exps.map((e) => addUp(r.ps.filter((p) => p.expiration === e), greek)));
     const max = Math.max(...cellVals.map(Math.abs), 1e-9);
     $("grid-title").textContent = g.title;
-    $("grid-note").textContent = g.note;
+    const covered = list.filter((p) => counts(p, greek)).length;
+    $("grid-note").textContent = g.note + (covered === list.length ? "" : covered ? ` ${covered} of ${list.length} spreads have a beta. The rest show a dash and are left out of every total.` : " No spread has a beta, so every cell is a dash.");
     $("legend").innerHTML = g.diverging
       ? `bearish <i style="background:linear-gradient(90deg, color-mix(in oklab, var(--ink) 88%, var(--surface)), var(--surface), color-mix(in oklab, var(--signal) 88%, var(--surface)))"></i> bullish`
       : `less <i style="background:linear-gradient(90deg, var(--surface), color-mix(in oklab, var(--signal) 88%, var(--surface)))"></i> more`;
@@ -142,12 +148,13 @@
     const body = rows.map((r) => `<tr><th scope="row">${esc(r.u)}<small>${r.kind}</small></th>${exps.map((e) => {
       const ps = r.ps.filter((p) => p.expiration === e);
       if (!ps.length) return `<td><span class="cell none"></span></td>`;
-      const v = sum(ps, greek), c = shade(v, max);
       const lead = ps.find((p) => p.id === selected) || ps[0];
+      if (!ps.some((p) => counts(p, greek))) return `<td><button type="button" class="cell nobeta ${ps.some((p) => p.hypo) ? "hypo" : ""} ${ps.some((p) => p.id === selected) ? "sel" : ""}" data-id="${lead.id}" aria-label="${esc(lead.name)}, no beta">—</button></td>`;
+      const v = addUp(ps, greek), c = shade(v, max);
       const label = ps.length > 1 ? `${ps.length} ${r.u} ${r.kind} spreads` : esc(lead.name);
       return `<td><button type="button" class="cell ${ps.some((p) => p.hypo) ? "hypo" : ""} ${ps.some((p) => p.id === selected) ? "sel" : ""}" data-id="${lead.id}" style="background:${c.bg};color:${c.fg}" aria-label="${label}, ${g.name} ${fmt(v, g.dp)}">${fmt(v, g.dp)}</button></td>`;
-    }).join("")}<td class="tot">${fmt(r.total, g.dp)}</td></tr>`).join("");
-    const foot = `<tfoot><tr><th scope="row">Total</th>${exps.map((e) => `<td class="tot">${fmt(sum(list.filter((p) => p.expiration === e), greek), g.dp)}</td>`).join("")}<td class="tot">${fmt(sum(list, greek), g.dp)}</td></tr></tfoot>`;
+    }).join("")}<td class="tot">${totalText(r.ps, greek, g.dp)}</td></tr>`).join("");
+    const foot = `<tfoot><tr><th scope="row">Total</th>${exps.map((e) => `<td class="tot">${totalText(list.filter((p) => p.expiration === e), greek, g.dp)}</td>`).join("")}<td class="tot">${totalText(list, greek, g.dp)}</td></tr></tfoot>`;
     $("heat").innerHTML = head + `<tbody>${body}</tbody>` + foot;
   }
   $("heat").addEventListener("click", (e) => { const b = e.target.closest(".cell[data-id]"); if (b) select(b.dataset.id); });
