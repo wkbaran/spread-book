@@ -8,7 +8,7 @@
 
 const fs   = require('fs');
 const path = require('path');
-const { RULES, takenAt, enrich, tagCondors, decide } = require('./book');
+const { RULES, takenAt, enrich, tagCondors, decide, spreadKey, history } = require('./book');
 
 const reportsDir = path.join(__dirname, 'reports');
 
@@ -28,10 +28,45 @@ const list = snap.positions.map(p => enrich({ ...p }, snap));
 tagCondors(list);
 const lists = decide(list);
 
+// Every earlier snapshot in the same folder, up to this one, for each spread's entry and the closed list.
+// A snapshot that won't parse is skipped: losing a little history is better than no brief.
+function earlierSnapshots() {
+  const here = path.resolve(snapFile), now = Date.parse(takenAt(snap)), out = [];
+  for (const f of fs.readdirSync(path.dirname(snapFile)).filter(f => f.endsWith('-portfolio.json'))) {
+    if (path.resolve(path.dirname(snapFile), f) === here) continue;
+    try {
+      const s = JSON.parse(fs.readFileSync(path.join(path.dirname(snapFile), f), 'utf8'));
+      if (Date.parse(takenAt(s)) < now) out.push(s);
+    } catch (e) { console.warn(`WARN: skipping ${f} in the history: ${e.message}`); }
+  }
+  return out;
+}
+const { open, closed } = history([...earlierSnapshots(), snap]);
+
 const round = (v, dp = 2) => v === null || v === undefined ? null : Math.round(v * 10 ** dp) / 10 ** dp;
 const sum   = (ps, k) => ps.reduce((s, p) => s + p[k], 0);
 const GREEKS = ['theta', 'delta', 'gamma', 'vega'];
 const greeks = ps => Object.fromEntries(GREEKS.map(k => [k, round(sum(ps, k), 3)]));
+
+const entry = e => !e || !e.known ? { known: false } : {
+  known:              true,
+  firstSeenAt:        e.firstSeenAt,
+  pop:                round(e.pop, 3),
+  iv:                 round(e.iv, 1),
+  dte:                e.dte,
+  credit:             round(e.credit),
+  maxLoss:            round(e.maxLoss),
+  sigmaToShortStrike: round(e.z, 2),
+  spot:               round(e.spot),
+  creditToWidthPct:   round(e.creditToWidthPct, 1),
+};
+
+// Which run of a spread this is (1 for the first); episodeBreak says why a later one began.
+const episode = e => ({
+  episode:      e ? e.episode : 1,
+  reopened:     e ? e.episode > 1 : false,
+  episodeBreak: e ? e.episodeBreak : null,
+});
 
 const position = p => ({
   name:            p.name,
@@ -49,6 +84,12 @@ const position = p => ({
   sigmaToShortStrike: round(p.z, 2),
   nearShortStrike: p.nearStrike,
   pop:             round(p.chance, 3),
+  popPct:          round(p.popPct, 1),
+  width:           p.width,
+  creditToWidthPct: round(p.creditToWidthPct, 1),
+  profitOfRiskPct: round(p.profitOfRiskPct, 1),
+  entry:           entry(open.get(spreadKey(p))?.entry),
+  ...episode(open.get(spreadKey(p))),
   credit:          round(p.credit),
   maxProfit:       round(p.maxProfit),
   maxLoss:         round(p.maxLoss),
@@ -84,6 +125,10 @@ const watch = list.filter(p => p.nearStrike).sort((a, b) => a.z - b.z);
 
 const haveBw = list.filter(p => p.bwDelta !== null);
 
+const KINDS = ['put', 'call', 'other'];
+const ofKind = k => list.filter(p => p.kind === k);
+const byKind = f => Object.fromEntries(KINDS.map(k => [k, f(ofKind(k))]));
+
 const closest = [...list].filter(p => !p.exit).sort((a, b) => b.toward - a.toward);
 
 const brief = {
@@ -103,6 +148,7 @@ const brief = {
     rollWindowDays:        RULES.rollDays,
     gettingClosePct:       RULES.near * 100,
     warnWithinSigmaOfShortStrike: RULES.strikeSigma,
+    closedLookbackDays:    RULES.closedDays,
     betaMaxAgeDays:        RULES.betaMaxAgeDays,
   },
   glossary: {
@@ -120,11 +166,24 @@ const brief = {
     betaWeightedDelta: 'delta × beta × (underlying price ÷ SPY price): the number of SPY shares the position behaves like. Beta is Schwab\'s, passed on by equity-watch. null when the underlying has no beta, or the betas are more than betaMaxAgeDays older than the snapshot. totals.betaWeightedDelta adds up only the positions that have one (see totals.betaCoverage).',
     gamma:         'How quickly delta turns against the position in a big move. Negative for credit spreads.',
     vega:          'Dollars per one-point rise in implied volatility.',
-    pop:           'OptionStrat probability of keeping the full credit.',
-    ev:            'pop × maxProfit − (1 − pop) × maxLoss. All-or-nothing, so usually negative; compare, do not act on alone.',
+    pop:           'OptionStrat probability of keeping the full credit, 0 to 1. A current value, not the value at entry: read entry.pop for that.',
+    popPct:        'pop × 100.',
+    ev:            'pop × maxProfit − (1 − pop) × maxLoss. All-or-nothing, so usually negative; compare, do not act on alone. A current value, not the value at entry; entry has no ev.',
+    width:         'Dollar distance between the two strikes. null unless both are plain numbers in the spread name.',
+    creditToWidthPct: 'Credit as a percentage of the width, per contract: credit ÷ (maxProfit + maxLoss) × 100, which is credit ÷ (width × 100) for one contract and stays right for more. null for a spread that is neither a put nor a call spread, whose "credit" may be a debit.',
+    profitOfRiskPct:  'maxProfit ÷ maxLoss × 100: what the spread can earn for each 100 it can lose.',
+    entry:         'What the spread looked like in the first snapshot of its episode (firstSeenAt, so up to a few hours after it was opened): pop, iv, dte, credit, maxLoss, sigmaToShortStrike, spot and creditToWidthPct. { known: false } when it was already open in the oldest snapshot we hold, because its true entry is not on file. This is the only place to find entry numbers: pop, ev and every other field on a position are current.',
+    episode:       'Which run of this spread it is, counting from 1. The same name, expiration and strikes is one spread until an episode break, and each episode is its own position with its own entry and, when it ends, its own closed record.',
+    reopened:      'true when episode is above 1: the spread was closed and opened again, or resized.',
+    episodeBreak:  'Why an episode above 1 began, null for episode 1. "gap": the spread was missing from at least one snapshot between two sightings. "resized": its credit or maxLoss changed by a cent or more since the last sighting, so a contract was added or it was reopened at another price (when both apply, "gap"). A snapshot file that could not be read counts as neither presence nor absence. Blind spot: a close and reopen at the same credit between two consecutive snapshots (1.6 to 66 hours apart, median 5.7) looks like nothing happened.',
+    closed:        'Episodes that ended before this snapshot, closed within closedLookbackDays, newest first. A spread held as two saved trades counts once. openedAt, daysHeld and entry come from the first snapshot containing it (openedAt and daysHeld are null when entry.known is false). closedAt is the first snapshot without it. lastReturnPct is from the last snapshot with it, so approximate is always true: the real close, and the return at it, came somewhere between.',
+    outcome:       'Judged on the last snapshot with the spread: target (returnPct at or past closeAtPctOfMaxProfit), else stop (loss at or past stopAtPctOfMaxLoss), else expired (dte 0 or less), else other. A spread that expired worthless counts as target when its last return was already 50 or more.',
+    book:          'The whole book by kind: counts and maxLoss for put (Bull Put), call (Bear Call) and other spreads, netDelta, and betaWeightedDelta over the positions that have a beta (null when none do; betaCoverage says how many). Same figures as totals, regrouped.',
+    spotsAsOf:     'When the Yahoo prices behind sigmaToShortStrike and underlyingSpot were fetched. They are fetched 25 to 45 minutes after the positions in generatedAt, so the distance is that stale. Prices of a re-published old snapshot are the time of the re-run. null for snapshots from before this was recorded, or when Yahoo returned nothing.',
     thetaPerGamma: 'Theta earned per unit of gamma. Low values are most exposed to a sharp move.',
     thetaPerVega:  'Theta earned per unit of vega. Low values are most exposed to a volatility spike.',
   },
+  spotsAsOf: snap.spotsAsOf ?? null,
   summary: {
     positions:    list.length,
     underlyings:  new Set(list.map(p => p.underlying)).size,
@@ -146,6 +205,14 @@ const brief = {
   watch: {
     nearShortStrike: watch.map(position),
   },
+  book: {
+    counts:           { puts: ofKind('put').length, calls: ofKind('call').length, other: ofKind('other').length },
+    maxLossTotal:     round(sum(list, 'maxLoss')),
+    maxLossByKind:    byKind(ps => round(sum(ps, 'maxLoss'))),
+    netDelta:         round(sum(list, 'delta'), 3),
+    betaWeightedDelta: haveBw.length ? round(sum(haveBw, 'bwDelta'), 2) : null,
+    betaCoverage:     { positions: haveBw.length, of: list.length },
+  },
   totals: {
     ...greeks(list),
     betaWeightedDelta: haveBw.length ? round(sum(haveBw, 'bwDelta'), 2) : null,
@@ -156,7 +223,12 @@ const brief = {
     maxLoss:   round(sum(list, 'maxLoss')),
   },
   concentration: {
-    byUnderlying: concentration(p => p.underlying).map(({ key, ...g }) => ({ underlying: key, ...g })),
+    byUnderlying: concentration(p => p.underlying, ps => ({
+      maxLoss:        round(sum(ps, 'maxLoss')),
+      kinds:          Object.fromEntries(KINDS.map(k => [k, ps.filter(p => p.kind === k).length])),
+      expirations:    [...new Set(ps.map(p => p.expiration))].sort(),
+      underlyingSpot: round(snap.spots && snap.spots[ps[0].underlying] > 0 ? snap.spots[ps[0].underlying] : null),
+    })).map(({ key, ...g }) => ({ underlying: key, ...g })),
     byExpiration: concentration(p => p.expiration, ps => ({ dte: ps[0].dte }))
       .map(({ key, ...g }) => ({ expiration: key, ...g }))
       .sort((a, b) => a.expiration.localeCompare(b.expiration)),
@@ -167,6 +239,11 @@ const brief = {
       .map(p => ({ name: p.name, status: p.status, pnl: p.pnl, prevReturnPct: p.prevReturnPct, currReturnPct: p.currReturnPct })),
     closed: pnl.positions.filter(p => p.status === 'closed').map(p => p.name),
     opened: pnl.positions.filter(p => p.status === 'new').map(p => p.name) },
+  closed: closed.map(c => ({
+    name: c.name, underlying: c.underlying, kind: c.kind, openedAt: c.openedAt, closedAt: c.closedAt,
+    daysHeld: round(c.daysHeld, 1), entry: entry(c.entry), ...episode(c), lastReturnPct: round(c.lastReturnPct, 1),
+    outcome: c.outcome, approximate: c.approximate,
+  })),
   positions: [...list].sort((a, b) => a.dte - b.dte || a.name.localeCompare(b.name)).map(position),
 };
 

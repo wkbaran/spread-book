@@ -168,11 +168,13 @@ async function fetchCurrentPrices(underlyings) {
 (async () => {
   const underlyings = [...new Set(spreads.map(s => s.underlying))];
   // SPY comes with the same fetch, for beta-weighting; it is only in `prices` if the book holds it.
-  let prices = {}, spy = null;
+  let prices = {}, spy = null, spotsAsOf;
   try {
     const fetched = await fetchCurrentPrices([...new Set([...underlyings, 'SPY'])]);
     spy    = fetched.SPY ?? null;
     prices = Object.fromEntries(underlyings.filter(u => u in fetched).map(u => [u, fetched[u]]));
+    // When the prices were fetched, not when the positions were: the two jobs run 25 to 45 minutes apart.
+    if (Object.keys(fetched).length) spotsAsOf = new Date().toISOString();
   }
   catch (e) { console.warn('WARN: price fetch failed:', e.message); }
   const priceFile = path.join(reportsDir, basename + '-prices.json');
@@ -191,6 +193,7 @@ async function fetchCurrentPrices(underlyings) {
     generatedAt: snapshotTime.toISOString(),
     source:      path.basename(csvFile),
     spots:       prices,
+    spotsAsOf,
     spy,
     betas:       betas || undefined,
     betasAsOf:   betaFile ? betaFile.asOf : undefined,

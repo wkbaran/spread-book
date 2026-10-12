@@ -107,12 +107,19 @@ Each report is one self-contained HTML page. It embeds its snapshot as JSON, and
 | `summary` | Counts for each decision list, plus the spreads closest to the target and to the stop |
 | `decisions` | `readyToClose`, `atStop`, `inRollWindow` and `gettingClose`, in the same order as the report |
 | `watch` | `nearShortStrike`: spreads inside the strike-distance warning, closest first. Informational, not an exit rule |
-| `totals`, `concentration` | Book greeks, plus `betaWeightedDelta` over the positions that have a beta (`betaCoverage` says how many), then greeks and theta share by underlying and by expiration |
+| `spotsAsOf` | When the Yahoo prices behind `sigmaToShortStrike` and `underlyingSpot` were fetched, 25 to 45 minutes after the positions. `null` for snapshots from before it was recorded |
+| `book` | The whole book by kind: `counts` (`puts`, `calls`, `other`), `maxLossTotal`, `maxLossByKind`, `netDelta`, and `betaWeightedDelta` with its `betaCoverage` (`null` until betas exist) |
+| `totals`, `concentration` | Book greeks, plus `betaWeightedDelta` over the positions that have a beta (`betaCoverage` says how many), then greeks and theta share by underlying and by expiration. Each underlying also carries `maxLoss`, `kinds` (spread count by `put`, `call`, `other`), its `expirations` and `underlyingSpot`, so a screener can avoid doubling up |
+| `closed` | Spreads that left the book in the last 60 days: name, `openedAt`, `closedAt`, `daysHeld`, `entry`, `lastReturnPct` and an `outcome` (`target`, `stop`, `expired` or `other`). Each record is one `episode` of a spread. Always `approximate`: the return is from the last snapshot that held the spread, not at the close |
 | `pnl` | Attribution since the previous run: totals, the biggest movers, and spreads opened or closed |
-| `positions` | Every spread with its derived numbers, including `sigmaToShortStrike`, nearest expiration first |
+| `positions` | Every spread with its derived numbers, including `sigmaToShortStrike`, sizing (`width`, `creditToWidthPct`, `profitOfRiskPct`, `popPct`) `entry` and `episode`, `reopened`, `episodeBreak`, nearest expiration first |
 | `links` | The HTML report, full snapshot and P&L JSON, relative to `latest.json` |
 
 The decision lists come from `book.js`, the same code the report page runs, so the two always agree. Each run also keeps its own copy as `<base>-brief.json`.
+
+`pop` and `ev` are current values, not the values at entry. `entry` is the only place to find those: it holds what the spread looked like in the first snapshot that contained it, built from every `*-portfolio.json` in `reports/`. A spread already open in the oldest snapshot gets `entry: { "known": false }` rather than a guess, and so does its `closed` record.
+
+The same name, expiration and strikes is one spread until an *episode break* starts a new `episode` (`reopened: true`, with `episodeBreak` saying why): `"gap"` when it was missing from a snapshot between two sightings, `"resized"` when its credit or max loss changed by a cent. Each episode has its own entry and closed record. A snapshot file that fails to parse is skipped, so it can't cause a gap. One blind spot: a close and reopen at the same credit between two consecutive snapshots (1.6 to 66 hours apart, median 5.7) is invisible. Percentages in the sizing fields run 0 to 100.
 
 ## Scripts
 
@@ -143,7 +150,7 @@ docs/       README screenshots
 
 ## Tests
 
-`npm test` runs the unit tests in `test/` with Node's built-in runner, so there is nothing to install. They cover `book.js` (the exit rules, the strike distance and the beta-weighted delta, including the cases where each is blank) and `betas.js` (the underlyings list and reading the betas file). The report page, `portfolio.js` and `brief.js` have no automated tests; check them by running the pipeline on a sample CSV from `data/` and opening the result.
+`npm test` runs the unit tests in `test/` with Node's built-in runner, so there is nothing to install. They cover `book.js` (the exit rules, the strike distance, the beta-weighted delta and the sizing numbers, including the cases where each is blank; and the history behind `entry` and `closed`: the unknown entry, the dedupe, the 60-day window and the episode breaks) and `betas.js` (the underlyings list and reading the betas file). The report page, `portfolio.js` and `brief.js` have no automated tests; check them by running the pipeline on a sample CSV from `data/` and opening the result.
 
 ## Scheduled publishing (Docker)
 
@@ -153,7 +160,7 @@ The `docker/` directory publishes to the S3 bucket and CloudFront site described
 2. **equity-watch's beta job**, in its own container at 8:05 AM and 2:05 PM: reads that list and writes `shared/betas.json`.
 3. **`publish.sh`** at 8:10 AM and 2:10 PM: builds the report from the CSV job 1 left, reads the betas, and uploads.
 
-Job 2 never downloads, and it refuses a CSV more than 90 minutes old, so a failed download can't republish an old export as new. A missing or old `betas.json` doesn't stop the report. The snapshot records when the betas were computed. Prices (and so the strike distance) are fetched when job 2 runs, 25 to 45 minutes after the positions.
+Job 2 never downloads, and it refuses a CSV more than 90 minutes old, so a failed download can't republish an old export as new. A missing or old `betas.json` doesn't stop the report. The snapshot records when the betas were computed. Prices (and so the strike distance) are fetched when job 2 runs, 25 to 45 minutes after the positions; the snapshot records when as `spotsAsOf`.
 
 | File | Purpose |
 |---|---|

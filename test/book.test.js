@@ -134,3 +134,35 @@ test('the strike distance does not depend on betas or SPY', () => {
   assert.equal(p.bwDelta, null);
   close(p.z, (250 - 240) / move(250, 31.49, 24));
 });
+
+test('width, credit-to-width and profit-to-risk size a spread as percentages', () => {
+  const p = SB.enrich(spread({ credit: 61 }), snap({ AAPL: 250 }));
+  assert.equal(p.width, 5);
+  close(p.creditToWidthPct, 12.2);
+  close(p.profitOfRiskPct, (61 / 439) * 100);
+  close(p.popPct, 75);
+});
+
+test('decimal strikes give a decimal width', () => {
+  const p = SB.enrich(spread({ name: 'CSCO Apr 17th 67.5/72.5 Bull Put Spread', credit: 55.5, maxProfit: 55.5, maxLoss: 444.5 }), snap({}));
+  assert.equal(p.width, 5);
+  close(p.creditToWidthPct, 11.1);
+});
+
+test('credit-to-width is per contract: two contracts of the same spread give the same figure', () => {
+  const one = SB.enrich(spread({ credit: 61 }), snap({}));
+  const two = SB.enrich(spread({ credit: 122, maxProfit: 122, maxLoss: 878 }), snap({}));
+  close(two.creditToWidthPct, one.creditToWidthPct);
+  close(two.profitOfRiskPct, one.profitOfRiskPct);
+});
+
+test('the sizing numbers are null, not zero or NaN, when they cannot be worked out', () => {
+  const noStrikes = SB.enrich(spread({ name: 'AAPL Apr 17th Bull Put Spread' }), snap({}));
+  assert.equal(noStrikes.width, null);
+  assert.equal(noStrikes.creditToWidthPct, null);
+  const debit = SB.enrich(spread({ type: 'Other' }), snap({}));
+  assert.equal(debit.width, 5);
+  assert.equal(debit.creditToWidthPct, null);
+  const noRisk = SB.enrich(spread({ maxLoss: 0 }), snap({}));
+  assert.equal(noRisk.profitOfRiskPct, null);
+});
