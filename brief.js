@@ -55,6 +55,8 @@ const position = p => ({
   ev:              round(p.ev),
   theta:           round(p.theta, 3),
   delta:           round(p.delta, 3),
+  beta:            round(p.beta, 2),
+  betaWeightedDelta: round(p.bwDelta, 2),
   gamma:           round(p.gamma, 4),
   vega:            round(p.vega, 3),
   iv:              round(p.iv, 1),
@@ -80,6 +82,8 @@ function concentration(keyOf, extra = () => ({})) {
 // Informational: spreads whose short strike is within RULES.strikeSigma expected moves, closest first.
 const watch = list.filter(p => p.nearStrike).sort((a, b) => a.z - b.z);
 
+const haveBw = list.filter(p => p.bwDelta !== null);
+
 const closest = [...list].filter(p => !p.exit).sort((a, b) => b.toward - a.toward);
 
 const brief = {
@@ -99,6 +103,7 @@ const brief = {
     rollWindowDays:        RULES.rollDays,
     gettingClosePct:       RULES.near * 100,
     warnWithinSigmaOfShortStrike: RULES.strikeSigma,
+    betaMaxAgeDays:        RULES.betaMaxAgeDays,
   },
   glossary: {
     returnPct:     'Current gain or loss as a percentage of max profit, from OptionStrat.',
@@ -112,6 +117,7 @@ const brief = {
     nearShortStrike:    'sigmaToShortStrike is below warnWithinSigmaOfShortStrike. A heads-up only: it is not an exit rule and no decision list uses it.',
     theta:         'Dollars per day from time decay.',
     delta:         'Net direction. Positive gains if the underlying rises.',
+    betaWeightedDelta: 'delta × beta × (underlying price ÷ SPY price): the number of SPY shares the position behaves like. Beta is Schwab\'s, passed on by equity-watch. null when the underlying has no beta, or the betas are more than betaMaxAgeDays older than the snapshot. totals.betaWeightedDelta adds up only the positions that have one (see totals.betaCoverage).',
     gamma:         'How quickly delta turns against the position in a big move. Negative for credit spreads.',
     vega:          'Dollars per one-point rise in implied volatility.',
     pop:           'OptionStrat probability of keeping the full credit.',
@@ -142,6 +148,9 @@ const brief = {
   },
   totals: {
     ...greeks(list),
+    betaWeightedDelta: haveBw.length ? round(sum(haveBw, 'bwDelta'), 2) : null,
+    betaCoverage:      { positions: haveBw.length, of: list.length },
+    betasAsOf:         snap.betasAsOf ?? null,
     credit:    round(sum(list, 'credit')),
     maxProfit: round(sum(list, 'maxProfit')),
     maxLoss:   round(sum(list, 'maxLoss')),

@@ -26,8 +26,8 @@ Only OptionStrat and Node.js are needed. Everything else is optional.
 |---|---|---|
 | Positions and greeks | [OptionStrat](https://optionstrat.com) Saved Trades, exported as xlsx through its API | Yes. Requires an OptionStrat account |
 | xlsx → CSV conversion | [SheetJS](https://sheetjs.com/) (`xlsx`), the only npm dependency | Yes, runs locally |
-| Betas | The sibling project equity-watch: its `beta` command asks Schwab and hands the result over through a shared directory | Optional. Saved in the snapshot; nothing in the report uses them yet |
-| Underlying prices | [Yahoo Finance](https://finance.yahoo.com/) chart API, for daily P&L attribution and the distance to each short strike | Optional. Free, no key; attribution and the strike distance are skipped without it |
+| Betas | The sibling project equity-watch: its `beta` command asks Schwab and hands the result over through a shared directory | Optional. Weights each spread's delta; the column is blank for a spread without a beta, or when the betas are more than 10 days old |
+| Underlying prices | [Yahoo Finance](https://finance.yahoo.com/) chart API, for daily P&L attribution, the distance to each short strike, and SPY's price for beta-weighting | Optional. Free, no key; those features are skipped without it |
 | Report font | [Archivo](https://fonts.google.com/specimen/Archivo) from Google Fonts | Loaded by the browser |
 | Hosting | AWS S3 + CloudFront (`cloudformation.yaml`) | Optional. Reports are self-contained HTML files |
 | Scheduling | Docker with [supercronic](https://github.com/aptible/supercronic) | Optional |
@@ -78,11 +78,11 @@ Each report is one self-contained HTML page. It embeds its snapshot as JSON, and
   - *21 days or less*: inside the close-or-roll window.
   - *Getting close*: more than 60% of the way to either exit.
 - **Short strike distance.** Not a decision list. Each spread gets the number of expected moves between the stock and its short strike, `price × IV × √(days ÷ 365)` being one move. Below 0.5 it is highlighted as a heads-up; a negative number means the stock has passed the strike. Hover the column heading, or the label in the spread detail, for what σ means. The threshold is `RULES.strikeSigma` in `book.js`. It needs the underlying's price, which comes from Yahoo and is saved in the snapshot as `spots`, so it is blank for older snapshots and for symbols Yahoo can't price (indexes such as SPX).
-- **Book totals.** Theta per day, delta, gamma, and vega per IV point for the whole book. Each total switches the heatmap below it (keys 1–4 do the same).
+- **Book totals.** Theta per day, delta, gamma, and vega per IV point for the whole book. Each total switches the heatmap below it (keys 1–4 do the same). The Delta card also shows the beta-weighted delta: the number of SPY shares the book behaves like, from each spread's `delta × beta × (stock price ÷ SPY price)`. Only spreads with a beta count, and the card says how many do.
 - **Heatmap.** The chosen greek by underlying and expiration, with row and column totals. Each underlying gets one row per spread type, so the two legs of an iron condor stay separate. Delta uses a diverging scale: signal colour for bullish, ink for bearish.
 - **Spread detail.** Click any cell, chart dot, decision or scorecard row to open that spread: progress from the stop to the close target, PoP, credit, max loss, EV, IV, the greeks, and its rank on both quality ratios. Iron condor legs link to each other.
 - **What each spread pays for its risk.** Theta per unit gamma against theta per unit vega. Spreads below the median on both fall in the shaded corner; those are the first to close when you want capital back. The dashed lines are the book's medians, not the chart's midpoint. Spreads with zero gamma or vega are listed under the chart.
-- **Scorecard.** Every spread with days left, PoP, credit, max loss, EV, progress toward an exit, distance to the short strike, the greeks, IV and both quality ratios, plus book totals. Select a heading to sort. A gain is shown as a share of max profit and a loss as a share of max loss, matching the two exit rules.
+- **Scorecard.** Every spread with days left, PoP, credit, max loss, EV, progress toward an exit, distance to the short strike, the greeks (with a beta-weighted delta column), IV and both quality ratios, plus book totals. Select a heading to sort. A gain is shown as a share of max profit and a loss as a share of max loss, matching the two exit rules.
 - **Try a trade.** Paste one or more rows from the OptionStrat export, comma-separated or copied from Excel. Each trade is added to every total, the heatmap, the chart and the scorecard with a dashed outline, and the totals show how much it changes.
 - **Snapshot menu.** The 14 newest snapshots (about a week at two runs per trading day). Choosing one redraws the page in place in the current design, and the choice is kept in the URL (`?snapshot=<base>`) so it can be linked.
 
@@ -107,7 +107,7 @@ Each report is one self-contained HTML page. It embeds its snapshot as JSON, and
 | `summary` | Counts for each decision list, plus the spreads closest to the target and to the stop |
 | `decisions` | `readyToClose`, `atStop`, `inRollWindow` and `gettingClose`, in the same order as the report |
 | `watch` | `nearShortStrike`: spreads inside the strike-distance warning, closest first. Informational, not an exit rule |
-| `totals`, `concentration` | Book greeks, then greeks and theta share by underlying and by expiration |
+| `totals`, `concentration` | Book greeks, plus `betaWeightedDelta` over the positions that have a beta (`betaCoverage` says how many), then greeks and theta share by underlying and by expiration |
 | `pnl` | Attribution since the previous run: totals, the biggest movers, and spreads opened or closed |
 | `positions` | Every spread with its derived numbers, including `sigmaToShortStrike`, nearest expiration first |
 | `links` | The HTML report, full snapshot and P&L JSON, relative to `latest.json` |
@@ -143,7 +143,7 @@ docs/       README screenshots
 
 ## Tests
 
-`npm test` runs the unit tests in `test/` with Node's built-in runner, so there is nothing to install. They cover `book.js` (the exit rules and the strike distance, including the cases where it is blank) and `betas.js` (the underlyings list and reading the betas file). The report page, `portfolio.js` and `brief.js` have no automated tests; check them by running the pipeline on a sample CSV from `data/` and opening the result.
+`npm test` runs the unit tests in `test/` with Node's built-in runner, so there is nothing to install. They cover `book.js` (the exit rules, the strike distance and the beta-weighted delta, including the cases where each is blank) and `betas.js` (the underlyings list and reading the betas file). The report page, `portfolio.js` and `brief.js` have no automated tests; check them by running the pipeline on a sample CSV from `data/` and opening the result.
 
 ## Scheduled publishing (Docker)
 

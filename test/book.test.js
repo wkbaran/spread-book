@@ -9,7 +9,7 @@ const snap = (spots) => ({ source: SOURCE, generatedAt: '2026-03-24T20:12:00.000
 const spread = (over = {}) => ({
   name: 'AAPL Apr 17th 235/240 Bull Put Spread', underlying: 'AAPL', type: 'Bull Put',
   expiration: '4/17/26 20:00', returnPct: 0, maxLoss: 439, maxProfit: 61, chance: 0.75,
-  theta: 1.27, gamma: -0.24, vega: -3.28, iv: 31.49, ...over,
+  theta: 1.27, gamma: -0.24, vega: -3.28, delta: 5.99, iv: 31.49, ...over,
 });
 
 const move = (spot, iv, days) => spot * (iv / 100) * Math.sqrt(days / 365);
@@ -89,4 +89,48 @@ test('the exit rules are unchanged by a price', () => {
   const lose = SB.enrich(spread({ returnPct: -200 }), snap({ AAPL: 250 }));
   assert.equal(win.exit, 'close');
   assert.equal(lose.exit, 'stop');
+});
+
+// Taken 2026-03-24 20:12 UTC. equity-watch's job runs after the download, so its file can be newer.
+const bwSnap = (over = {}) => ({ ...snap({ AAPL: 250 }), spy: 500, betas: { AAPL: 1.2 }, betasAsOf: '2026-03-24T20:30:00.000Z', ...over });
+
+test('beta-weighted delta is delta × beta × price ÷ SPY price, in SPY shares', () => {
+  const p = SB.enrich(spread(), bwSnap());
+  assert.equal(p.beta, 1.2);
+  close(p.bwDelta, (5.99 * 1.2 * 250) / 500);
+});
+
+test('a negative beta flips the sign', () => {
+  const p = SB.enrich(spread(), bwSnap({ betas: { AAPL: -0.5 } }));
+  close(p.bwDelta, (5.99 * -0.5 * 250) / 500);
+});
+
+test('betas are used up to RULES.betaMaxAgeDays old, and ignored beyond it', () => {
+  const day = 864e5, taken = Date.parse('2026-03-24T20:12:00.000Z');
+  const at = (days) => new Date(taken - days * day).toISOString();
+  assert.notEqual(SB.enrich(spread(), bwSnap({ betasAsOf: at(SB.RULES.betaMaxAgeDays - 1) })).bwDelta, null);
+  const old = SB.enrich(spread(), bwSnap({ betasAsOf: at(SB.RULES.betaMaxAgeDays + 1) }));
+  assert.equal(old.beta, null);
+  assert.equal(old.bwDelta, null);
+});
+
+test('bwDelta is null, not zero, when anything it needs is missing', () => {
+  const cases = {
+    'no betas in the snapshot':   bwSnap({ betas: undefined, betasAsOf: undefined }),
+    'no betasAsOf':               bwSnap({ betasAsOf: undefined }),
+    'no beta for the symbol':     bwSnap({ betas: { MSFT: 1 } }),
+    'a null beta':                bwSnap({ betas: { AAPL: null } }),
+    'no SPY price':               bwSnap({ spy: null }),
+    'no price for the symbol':    bwSnap({ spots: {} }),
+  };
+  for (const [what, s] of Object.entries(cases)) {
+    const p = SB.enrich(spread(), s);
+    assert.equal(p.bwDelta, null, what);
+  }
+});
+
+test('the strike distance does not depend on betas or SPY', () => {
+  const p = SB.enrich(spread(), bwSnap({ betas: undefined, betasAsOf: undefined, spy: null }));
+  assert.equal(p.bwDelta, null);
+  close(p.z, (250 - 240) / move(250, 31.49, 24));
 });

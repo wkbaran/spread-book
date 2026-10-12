@@ -42,6 +42,8 @@
 .greek .g-val { font-size: 3.1rem; line-height: 1; font-weight: 220; font-stretch: 62%; letter-spacing: -0.02em; }
 .greek[aria-pressed="true"] .g-val { color: var(--signal); font-weight: 330; }
 .greek .g-diff { font-size: 0.95rem; font-stretch: 75%; font-weight: 500; color: var(--signal); margin-left: 0.35rem; letter-spacing: 0; }
+.greek .g-bw { font-size: 0.82rem; font-stretch: 85%; color: var(--sub); }
+.greek .g-bw.none { color: var(--muted); }
 .greek .g-help { font-size: 0.78rem; color: var(--muted); line-height: 1.35; }
 
 /* ---- decisions ------------------------------------------------------ */

@@ -13,6 +13,7 @@
     rollDays: 21, // close or roll inside this many days
     near: 0.6, // "getting close": this far toward either exit
     strikeSigma: 0.5, // flag a spread when its short strike is within this many expected moves of the stock
+    betaMaxAgeDays: 10, // ignore betas computed more than this long before the snapshot
   };
 
   // "4/17/26 14:00" or "2026-04-17" → "2026-04-17"
@@ -58,7 +59,19 @@
     p.toward = p.returnPct >= 0 ? Math.min(1, p.returnPct / RULES.target) : -Math.min(1, p.lossOfMax / RULES.stop);
     p.exit = p.returnPct >= RULES.target ? "close" : p.lossOfMax >= RULES.stop ? "stop" : "";
     strikeDistance(p, snap.spots && snap.spots[p.underlying]);
+    betaWeight(p, snap);
     return p;
+  }
+
+  // Delta in SPY shares: delta × beta × (stock price ÷ SPY price), the number of SPY shares the
+  // spread behaves like. Sets beta (null when there is none, or the file is older than
+  // RULES.betaMaxAgeDays at the snapshot) and bwDelta (null when it also lacks a price).
+  function betaWeight(p, snap) {
+    const beta = snap.betas && snap.betas[p.underlying];
+    const spot = snap.spots && snap.spots[p.underlying];
+    const ageDays = (Date.parse(takenAt(snap)) - Date.parse(snap.betasAsOf)) / 864e5; // NaN without betasAsOf
+    p.beta = ageDays <= RULES.betaMaxAgeDays && Number.isFinite(beta) ? beta : null;
+    p.bwDelta = p.beta !== null && spot > 0 && snap.spy > 0 ? (p.delta * p.beta * spot) / snap.spy : null;
   }
 
   // How far the stock is from the short strike, in expected moves: the one-standard-deviation move

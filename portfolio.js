@@ -167,15 +167,20 @@ async function fetchCurrentPrices(underlyings) {
 
 (async () => {
   const underlyings = [...new Set(spreads.map(s => s.underlying))];
-  let prices = {};
-  try { prices = await fetchCurrentPrices(underlyings); }
+  // SPY comes with the same fetch, for beta-weighting; it is only in `prices` if the book holds it.
+  let prices = {}, spy = null;
+  try {
+    const fetched = await fetchCurrentPrices([...new Set([...underlyings, 'SPY'])]);
+    spy    = fetched.SPY ?? null;
+    prices = Object.fromEntries(underlyings.filter(u => u in fetched).map(u => [u, fetched[u]]));
+  }
   catch (e) { console.warn('WARN: price fetch failed:', e.message); }
   const priceFile = path.join(reportsDir, basename + '-prices.json');
   fs.writeFileSync(priceFile, JSON.stringify({ generatedAt: snapshotTime.toISOString(), prices }, null, 2));
   console.log(`Wrote → ${priceFile} (${Object.keys(prices).length}/${underlyings.length} underlyings)`);
 
-  // Betas from equity-watch's job, left in ./shared between the two jobs. Nothing in the report
-  // uses them yet; the snapshot keeps them, with when they were computed, for whatever reads them.
+  // Betas from equity-watch's job, left in ./shared between the two jobs. The snapshot keeps them,
+  // with when they were computed, and book.js weights each spread's delta by its beta.
   const betaFile = readBetas(path.join(__dirname, 'shared', 'betas.json'));
   const betas = betaFile && Object.fromEntries(underlyings.map(u => [u, betaFile.betas[u] ?? null]));
   console.log(betaFile
@@ -186,6 +191,7 @@ async function fetchCurrentPrices(underlyings) {
     generatedAt: snapshotTime.toISOString(),
     source:      path.basename(csvFile),
     spots:       prices,
+    spy,
     betas:       betas || undefined,
     betasAsOf:   betaFile ? betaFile.asOf : undefined,
     positions:   spreads.map(s => ({
@@ -308,6 +314,7 @@ async function fetchCurrentPrices(underlyings) {
           <dt>To short strike</dt><dd>How many expected moves (σ) the stock is from the short strike. One expected move, 1σ, is the one-standard-deviation price move from now to expiration: <code>price × IV × √(days ÷ 365)</code>. Lower is closer, and negative means the stock has passed the strike. It is highlighted below ${RULES.strikeSigma}σ as a heads-up, not an exit. Blank when Yahoo had no price for the underlying.</dd>
         <dt>Theta</dt><dd>Dollars earned per day from time decay, all else equal.</dd>
           <dt>Delta</dt><dd>Direction. Bull puts are positive, bear calls negative.</dd>
+        <dt>β Δ</dt><dd>Beta-weighted delta: <code>delta × beta × (stock price ÷ SPY price)</code>, the number of SPY shares the spread behaves like. Adding it up shows how much the book moves with the market. It uses Schwab's beta, passed on by equity-watch, so it is blank for a spread with no beta, or when the betas are more than ${RULES.betaMaxAgeDays} days old. The book total counts only the spreads that have one.</dd>
           <dt>Gamma</dt><dd>How fast delta moves against you. Negative for credit spreads, and largest near expiration and near the short strike.</dd>
           <dt>Vega</dt><dd>Dollars lost per one-point rise in implied volatility.</dd>
           <dt>IV</dt><dd>Implied volatility from the export.</dd>

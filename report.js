@@ -26,6 +26,7 @@
   const exitPct = (p) => (p.returnPct >= 0 ? pct(p.returnPct) : "−" + p.lossOfMax.toFixed(1) + "%");
   // σ (sigma) is one expected move: the one-standard-deviation price move from now to expiration.
   const SIGMA_HELP = `σ is one expected move: the one-standard-deviation price move from now to expiration, price × IV × √(days ÷ 365). The number is how many of those moves the stock is from the short strike. Lower is closer, and negative means the stock is past the strike. Highlighted below ${SB.RULES.strikeSigma}σ as a heads-up, not an exit.`;
+  const BW_HELP = "Beta-weighted delta: each spread's delta × its beta × (stock price ÷ SPY price), added up. It is the number of SPY shares the book behaves like. Beta is Schwab's, passed on by equity-watch; only spreads that have one are counted.";
   const sigma = (p) => (p.z === null ? "—" : fmt(p.z, 1) + "σ");
   const exitLong = (p) => (p.returnPct >= 0 ? `${pct(p.returnPct)} of max profit` : `${p.lossOfMax.toFixed(1)}% of max loss`);
 
@@ -65,12 +66,20 @@
     vega: { name: "Vega", unit: "per IV point", help: "What the book loses if implied volatility rises one point.", title: "Vega by underlying and expiration", note: "Brighter cells lose more in a volatility spike. Longer-dated spreads usually carry more.", dp: 2 },
   };
 
+  // The spreads with a beta-weighted delta add up; the line says how many that is.
+  function bwLine() {
+    const list = all(), have = list.filter((p) => p.bwDelta !== null);
+    if (!have.length) return `<span class="g-bw none" title="${BW_HELP}">Beta-weighted: not available</span>`;
+    const part = have.length < list.length ? ` (${have.length} of ${list.length})` : "";
+    return `<span class="g-bw" title="${BW_HELP}">Beta-weighted ${signed(sum(have, "bwDelta"), 1)} SPY shares${part}</span>`;
+  }
   function renderBook() {
     $("book").innerHTML = Object.entries(GREEKS).map(([k, g], i) => {
       const total = sum(all(), k), diff = sum(hypos, k);
       return `<button class="greek" type="button" data-g="${k}" aria-pressed="${k === greek}" title="Press ${i + 1}">
         <span class="g-name">${g.name}${g.unit ? " " + g.unit : ""}</span>
         <span class="g-val">${fmt(total, g.dp)}${hypos.length ? `<span class="g-diff">${signed(diff, g.dp)}</span>` : ""}</span>
+        ${k === "delta" ? bwLine() : ""}
         <span class="g-help">${g.help}</span></button>`;
     }).join("");
   }
@@ -185,6 +194,8 @@
       <dl class="kv">
         <dt>Theta per day</dt><dd>${fmt(p.theta)}</dd>
         <dt>Delta</dt><dd>${fmt(p.delta, 1)}</dd>
+        <dt>Beta</dt><dd>${p.beta === null ? "none" : p.beta.toFixed(2)}</dd>
+        <dt title="${BW_HELP}">Beta-weighted delta</dt><dd>${p.bwDelta === null ? "—" : fmt(p.bwDelta, 1) + `<span class="rank">SPY shares</span>`}</dd>
         <dt>Gamma</dt><dd>${fmt(p.gamma)}</dd>
         <dt>Vega</dt><dd>${fmt(p.vega)}</dd>
       </dl>
@@ -244,7 +255,7 @@
   // ---- scorecard -------------------------------------------------------------
   const COLS = [
     ["underlying", "Symbol"], ["strikes", "Spread"], ["dte", "Days"], ["chance", "PoP"], ["credit", "Credit"], ["maxLoss", "Max loss"], ["ev", "EV"],
-    ["toward", "Toward an exit"], ["z", "To short strike", SIGMA_HELP], ["theta", "Theta"], ["delta", "Delta"], ["gamma", "Gamma"], ["vega", "Vega"], ["iv", "IV"], ["tg", "Θ per Γ"], ["tv", "Θ per V"],
+    ["toward", "Toward an exit"], ["z", "To short strike", SIGMA_HELP], ["theta", "Theta"], ["delta", "Delta"], ["bwDelta", "β Δ", BW_HELP], ["gamma", "Gamma"], ["vega", "Vega"], ["iv", "IV"], ["tg", "Θ per Γ"], ["tv", "Θ per V"],
   ];
   const ASC_FIRST = ["underlying", "strikes", "dte", "z"];
   function renderScorecard() {
@@ -261,12 +272,13 @@
       <td class="num ${p.dte <= ROLL_DAYS ? "hot" : ""}">${p.dte}</td><td class="num">${Math.round(p.chance * 100)}%</td><td class="num">${money(p.credit)}</td><td class="num">${money(p.maxLoss)}</td><td class="num">${money(p.ev)}</td>
       <td class="num ${p.exit ? "hot" : ""}" title="${exitLong(p)}">${exitPct(p)}<span class="mini">${barHTML(p)}</span></td>
       <td class="num ${p.nearStrike ? "watch" : ""}" title="${p.z === null ? "No price for this underlying" : `Short strike $${p.shortStrike}, ${sigma(p)} away in expected moves`}">${sigma(p)}</td>
-      <td class="num">${fmt(p.theta)}</td><td class="num">${fmt(p.delta, 1)}</td><td class="num">${fmt(p.gamma)}</td><td class="num">${fmt(p.vega)}</td>
+      <td class="num">${fmt(p.theta)}</td><td class="num">${fmt(p.delta, 1)}</td><td class="num">${p.bwDelta === null ? "—" : fmt(p.bwDelta, 1)}</td><td class="num">${fmt(p.gamma)}</td><td class="num">${fmt(p.vega)}</td>
       <td class="num">${p.iv.toFixed(0)}%</td><td class="num">${p.tg === null ? "—" : p.tg.toFixed(2)}</td><td class="num">${p.tv === null ? "—" : p.tv.toFixed(2)}</td></tr>`).join("");
+    const bwHave = list.filter((p) => p.bwDelta !== null);
     const n = list.length || 1, tTot = sum(list, "theta"), gTot = sum(list, "gamma"), vTot = sum(list, "vega");
     const foot = `<tfoot><tr><td>Book</td><td class="kind">${list.length} spreads</td><td></td>
       <td class="num">${Math.round((sum(list, "chance") / n) * 100)}%<span class="avg">avg</span></td><td class="num">${money(sum(list, "credit"))}</td><td class="num">${money(sum(list, "maxLoss"))}</td><td class="num">${money(sum(list, "ev"))}</td><td></td><td></td>
-      <td class="num">${fmt(tTot)}</td><td class="num">${fmt(sum(list, "delta"), 1)}</td><td class="num">${fmt(gTot)}</td><td class="num">${fmt(vTot)}</td>
+      <td class="num">${fmt(tTot)}</td><td class="num">${fmt(sum(list, "delta"), 1)}</td><td class="num">${bwHave.length ? fmt(sum(bwHave, "bwDelta"), 1) : "—"}${bwHave.length && bwHave.length < list.length ? `<span class="avg">${bwHave.length}/${list.length}</span>` : ""}</td><td class="num">${fmt(gTot)}</td><td class="num">${fmt(vTot)}</td>
       <td class="num">${(sum(list, "iv") / n).toFixed(0)}%<span class="avg">avg</span></td><td class="num">${gTot ? (tTot / Math.abs(gTot)).toFixed(2) : "—"}</td><td class="num">${vTot ? (tTot / Math.abs(vTot)).toFixed(2) : "—"}</td></tr></tfoot>`;
     $("sc").innerHTML = head + `<tbody>${body}</tbody>` + foot;
   }
