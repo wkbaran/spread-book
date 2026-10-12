@@ -8,7 +8,8 @@
     "spread-book": "./portfolio.js"
   },
   "scripts": {
-    "start": "./run.sh"
+    "start": "./run.sh",
+    "test": "node --test test/*.test.js"
   },
   "engines": {
     "node": ">=22.9"

@@ -45,6 +45,9 @@ const position = p => ({
   lossOfMaxPct:    round(p.lossOfMax, 1),
   progressPct:     round(p.toward * 100, 0),
   exit:            p.exit || null,
+  shortStrike:     p.shortStrike,
+  sigmaToShortStrike: round(p.z, 2),
+  nearShortStrike: p.nearStrike,
   pop:             round(p.chance, 3),
   credit:          round(p.credit),
   maxProfit:       round(p.maxProfit),
@@ -74,13 +77,16 @@ function concentration(keyOf, extra = () => ({})) {
     .sort((a, b) => Math.abs(b.theta) - Math.abs(a.theta));
 }
 
+// Informational: spreads whose short strike is within RULES.strikeSigma expected moves, closest first.
+const watch = list.filter(p => p.nearStrike).sort((a, b) => a.z - b.z);
+
 const closest = [...list].filter(p => !p.exit).sort((a, b) => b.toward - a.toward);
 
 const brief = {
   schema:      'spread-book/brief@1',
   generatedAt: takenAt(snap),
   source:      snap.source,
-  about:       'Open credit spreads on OptionStrat, analysed against fixed exit rules. Refreshed at about 7:45 AM and 1:25 PM America/Denver on weekdays. Paths are relative to this file. Not investment advice; confirm with the broker before acting.',
+  about:       'Open credit spreads on OptionStrat, analysed against fixed exit rules. Positions are pulled at about 7:45 AM and 1:25 PM America/Denver on weekdays and the report is published at about 8:10 AM and 2:10 PM. Paths are relative to this file. Not investment advice; confirm with the broker before acting.',
   links: {
     report:    base + '-portfolio.html',
     positions: base + '-portfolio.json',
@@ -92,6 +98,7 @@ const brief = {
     stopAtPctOfMaxLoss:    RULES.stop,
     rollWindowDays:        RULES.rollDays,
     gettingClosePct:       RULES.near * 100,
+    warnWithinSigmaOfShortStrike: RULES.strikeSigma,
   },
   glossary: {
     returnPct:     'Current gain or loss as a percentage of max profit, from OptionStrat.',
@@ -101,6 +108,8 @@ const brief = {
     atStop:        'The loss has reached the stop.',
     inRollWindow:  'No exit hit, but rollWindowDays or fewer to expiration: close or roll before gamma speeds up.',
     gettingClose:  'Outside the roll window and at least gettingClosePct of the way to either exit.',
+    sigmaToShortStrike: 'Expected moves between the underlying and the short strike: (price − short strike) ÷ (price × IV × √(days ÷ 365)) for a put spread, the reverse for a call spread. Negative means the strike is already breached. null when Yahoo had no price.',
+    nearShortStrike:    'sigmaToShortStrike is below warnWithinSigmaOfShortStrike. A heads-up only: it is not an exit rule and no decision list uses it.',
     theta:         'Dollars per day from time decay.',
     delta:         'Net direction. Positive gains if the underlying rises.',
     gamma:         'How quickly delta turns against the position in a big move. Negative for credit spreads.',
@@ -117,6 +126,7 @@ const brief = {
     atStop:       lists.stopped.length,
     inRollWindow: lists.soon.length,
     gettingClose: lists.near.length,
+    nearShortStrike: watch.length,
     closestToTarget: closest[0] && closest[0].toward > 0 ? { name: closest[0].name, returnPct: round(closest[0].returnPct, 1) } : null,
     closestToStop:   closest.length && closest[closest.length - 1].toward < 0
       ? { name: closest[closest.length - 1].name, lossOfMaxPct: round(closest[closest.length - 1].lossOfMax, 1) } : null,
@@ -126,6 +136,9 @@ const brief = {
     atStop:       lists.stopped.map(position),
     inRollWindow: lists.soon.map(position),
     gettingClose: lists.near.map(position),
+  },
+  watch: {
+    nearShortStrike: watch.map(position),
   },
   totals: {
     ...greeks(list),

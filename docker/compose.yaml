@@ -15,3 +15,7 @@ services:
       # the host. ":z" relabels for SELinux, which is enforcing on nuc1.
       - /var/home/core/spread-book/data:/app/data:z
       - /var/home/core/spread-book/reports:/app/reports:z
+      # Shared with equity-watch, which writes betas.json here and reads underlyings.txt.
+      # A directory, not a file (its write is a rename), and ":z", not ":Z", so both
+      # containers can use it. SHARED_DIR comes from docker/.env and has no default.
+      - ${SHARED_DIR:?set SHARED_DIR in docker/.env to the directory shared with equity-watch}:/app/shared:z

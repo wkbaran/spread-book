@@ -24,6 +24,9 @@
   const snapLabel = (iso) => new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
   // Gains as a share of max profit, losses as a share of max loss.
   const exitPct = (p) => (p.returnPct >= 0 ? pct(p.returnPct) : "−" + p.lossOfMax.toFixed(1) + "%");
+  // σ (sigma) is one expected move: the one-standard-deviation price move from now to expiration.
+  const SIGMA_HELP = `σ is one expected move: the one-standard-deviation price move from now to expiration, price × IV × √(days ÷ 365). The number is how many of those moves the stock is from the short strike. Lower is closer, and negative means the stock is past the strike. Highlighted below ${SB.RULES.strikeSigma}σ as a heads-up, not an exit.`;
+  const sigma = (p) => (p.z === null ? "—" : fmt(p.z, 1) + "σ");
   const exitLong = (p) => (p.returnPct >= 0 ? `${pct(p.returnPct)} of max profit` : `${p.lossOfMax.toFixed(1)}% of max loss`);
 
   // ---- state ---------------------------------------------------------------
@@ -175,6 +178,8 @@
         <dt>Expected value</dt><dd>${money(p.ev)}</dd>
         <dt>IV</dt><dd>${p.iv.toFixed(1)}%</dd>
         <dt>Days left</dt><dd class="${p.dte <= ROLL_DAYS ? "hot" : ""}">${p.dte}</dd>
+        <dt>Short strike</dt><dd>${p.shortStrike === null ? "—" : "$" + p.shortStrike}</dd>
+        <dt title="${SIGMA_HELP}">Expected moves to it</dt><dd class="${p.nearStrike ? "watch" : ""}">${p.z === null ? "no price" : sigma(p) + (p.nearStrike ? `<span class="rank">inside ${SB.RULES.strikeSigma}σ</span>` : "")}</dd>
       </dl>
       <h4>Greeks</h4>
       <dl class="kv">
@@ -239,9 +244,9 @@
   // ---- scorecard -------------------------------------------------------------
   const COLS = [
     ["underlying", "Symbol"], ["strikes", "Spread"], ["dte", "Days"], ["chance", "PoP"], ["credit", "Credit"], ["maxLoss", "Max loss"], ["ev", "EV"],
-    ["toward", "Toward an exit"], ["theta", "Theta"], ["delta", "Delta"], ["gamma", "Gamma"], ["vega", "Vega"], ["iv", "IV"], ["tg", "Θ per Γ"], ["tv", "Θ per V"],
+    ["toward", "Toward an exit"], ["z", "To short strike", SIGMA_HELP], ["theta", "Theta"], ["delta", "Delta"], ["gamma", "Gamma"], ["vega", "Vega"], ["iv", "IV"], ["tg", "Θ per Γ"], ["tv", "Θ per V"],
   ];
-  const ASC_FIRST = ["underlying", "strikes", "dte"];
+  const ASC_FIRST = ["underlying", "strikes", "dte", "z"];
   function renderScorecard() {
     const list = all();
     const rows = [...list].sort((a, b) => {
@@ -250,16 +255,17 @@
       const d = typeof va === "string" ? va.localeCompare(vb) : va - vb;
       return d * sort.dir || a.dte - b.dte || b.theta - a.theta;
     });
-    const head = `<thead><tr>${COLS.map(([k, l]) => `<th scope="col" ${sort.key === k ? `aria-sort="${sort.dir > 0 ? "ascending" : "descending"}"` : ""}><button type="button" data-k="${k}">${l}</button></th>`).join("")}</tr></thead>`;
+    const head = `<thead><tr>${COLS.map(([k, l, tip]) => `<th scope="col" ${sort.key === k ? `aria-sort="${sort.dir > 0 ? "ascending" : "descending"}"` : ""}><button type="button" data-k="${k}"${tip ? ` title="${tip}"` : ""}>${l}</button></th>`).join("")}</tr></thead>`;
     const body = rows.map((p) => `<tr data-id="${p.id}" class="${p.id === selected ? "sel" : ""} ${p.hypo ? "hypo" : ""}">
       <td class="sym">${esc(p.underlying)}</td><td class="kind">${esc(p.strikes)} ${p.kind}${p.condor ? `<span class="tag">iron condor</span>` : ""}${p.hypo ? `<span class="tag">trial</span>` : ""}</td>
       <td class="num ${p.dte <= ROLL_DAYS ? "hot" : ""}">${p.dte}</td><td class="num">${Math.round(p.chance * 100)}%</td><td class="num">${money(p.credit)}</td><td class="num">${money(p.maxLoss)}</td><td class="num">${money(p.ev)}</td>
       <td class="num ${p.exit ? "hot" : ""}" title="${exitLong(p)}">${exitPct(p)}<span class="mini">${barHTML(p)}</span></td>
+      <td class="num ${p.nearStrike ? "watch" : ""}" title="${p.z === null ? "No price for this underlying" : `Short strike $${p.shortStrike}, ${sigma(p)} away in expected moves`}">${sigma(p)}</td>
       <td class="num">${fmt(p.theta)}</td><td class="num">${fmt(p.delta, 1)}</td><td class="num">${fmt(p.gamma)}</td><td class="num">${fmt(p.vega)}</td>
       <td class="num">${p.iv.toFixed(0)}%</td><td class="num">${p.tg === null ? "—" : p.tg.toFixed(2)}</td><td class="num">${p.tv === null ? "—" : p.tv.toFixed(2)}</td></tr>`).join("");
     const n = list.length || 1, tTot = sum(list, "theta"), gTot = sum(list, "gamma"), vTot = sum(list, "vega");
     const foot = `<tfoot><tr><td>Book</td><td class="kind">${list.length} spreads</td><td></td>
-      <td class="num">${Math.round((sum(list, "chance") / n) * 100)}%<span class="avg">avg</span></td><td class="num">${money(sum(list, "credit"))}</td><td class="num">${money(sum(list, "maxLoss"))}</td><td class="num">${money(sum(list, "ev"))}</td><td></td>
+      <td class="num">${Math.round((sum(list, "chance") / n) * 100)}%<span class="avg">avg</span></td><td class="num">${money(sum(list, "credit"))}</td><td class="num">${money(sum(list, "maxLoss"))}</td><td class="num">${money(sum(list, "ev"))}</td><td></td><td></td>
       <td class="num">${fmt(tTot)}</td><td class="num">${fmt(sum(list, "delta"), 1)}</td><td class="num">${fmt(gTot)}</td><td class="num">${fmt(vTot)}</td>
       <td class="num">${(sum(list, "iv") / n).toFixed(0)}%<span class="avg">avg</span></td><td class="num">${gTot ? (tTot / Math.abs(gTot)).toFixed(2) : "—"}</td><td class="num">${vTot ? (tTot / Math.abs(vTot)).toFixed(2) : "—"}</td></tr></tfoot>`;
     $("sc").innerHTML = head + `<tbody>${body}</tbody>` + foot;

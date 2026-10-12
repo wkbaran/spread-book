@@ -12,6 +12,7 @@
     stop: 25, // close losers when the loss reaches 25% of max loss
     rollDays: 21, // close or roll inside this many days
     near: 0.6, // "getting close": this far toward either exit
+    strikeSigma: 0.5, // flag a spread when its short strike is within this many expected moves of the stock
   };
 
   // "4/17/26 14:00" or "2026-04-17" → "2026-04-17"
@@ -56,7 +57,24 @@
     p.lossOfMax = p.returnPct < 0 && p.maxLoss > 0 ? ((-p.returnPct / 100) * p.maxProfit / p.maxLoss) * 100 : 0;
     p.toward = p.returnPct >= 0 ? Math.min(1, p.returnPct / RULES.target) : -Math.min(1, p.lossOfMax / RULES.stop);
     p.exit = p.returnPct >= RULES.target ? "close" : p.lossOfMax >= RULES.stop ? "stop" : "";
+    strikeDistance(p, snap.spots && snap.spots[p.underlying]);
     return p;
+  }
+
+  // How far the stock is from the short strike, in expected moves: the one-standard-deviation move
+  // to expiration, spot × IV × √(days/365). Positive is the safe side, negative is past the strike.
+  // Sets z and shortStrike (null when there is no spot, no IV or the spread isn't a plain put or call)
+  // and nearStrike, whether z is inside RULES.strikeSigma. That flag is informational: no decision list uses it.
+  function strikeDistance(p, spot) {
+    const legs = p.strikes.split("/").map(Number);
+    const plain = legs.length === 2 && legs.every((n) => n > 0);
+    p.shortStrike = !plain ? null : p.kind === "put" ? Math.max(...legs) : p.kind === "call" ? Math.min(...legs) : null;
+    p.z = null;
+    p.nearStrike = false;
+    if (p.shortStrike === null || !(spot > 0) || !(p.iv > 0)) return;
+    const move = spot * (p.iv / 100) * Math.sqrt(Math.max(p.dte, 1) / 365); // a spread expiring today still has a day of room
+    p.z = (p.kind === "put" ? spot - p.shortStrike : p.shortStrike - spot) / move;
+    p.nearStrike = p.z < RULES.strikeSigma;
   }
 
   // A bull put and a bear call on the same underlying and expiration are an iron condor.

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Generate a fresh report and publish it to S3/CloudFront.
-# Runs under cron in the Docker container (docker/crontab).
+# Job 2: build the report from the CSV fetch.sh already downloaded, and publish it to S3/CloudFront.
+# Runs under cron in the Docker container (docker/crontab), after equity-watch's beta job.
+# Usage: publish.sh [csv]   (a path rebuilds that older CSV; see report.sh)
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -10,7 +11,7 @@ DISTRIBUTION_ID="${CLOUDFRONT_DISTRIBUTION_ID:-E3AR100VQDUFIT}"
 
 echo "==> $(date '+%Y-%m-%d %H:%M:%S %Z') starting publish"
 
-bash run.sh
+bash report.sh "$@"
 
 echo "==> Uploading data and reports to s3://$BUCKET/"
 aws s3 sync data/ "s3://$BUCKET/data/" --only-show-errors

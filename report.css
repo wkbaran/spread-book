@@ -115,6 +115,7 @@ dl.kv dt { color: var(--muted); }
 dl.kv dd { margin: 0; text-align: right; font-stretch: 85%; }
 dl.kv .rank { color: var(--muted); font-size: 0.78rem; margin-left: 0.4rem; }
 dl.kv .hot { color: var(--signal); font-weight: 600; }
+dl.kv .watch { color: var(--signal); }
 .detail h4 { margin: 1.3rem 0 0; font-size: 0.95rem; font-weight: 600; font-stretch: 80%; color: var(--sub); }
 
 /* ---- quality scatter ----------------------------------------------- */
@@ -159,6 +160,7 @@ dl.kv .hot { color: var(--signal); font-weight: 600; }
 .sc .tag { margin-left: 0.4rem; font-size: 0.75rem; color: var(--muted); }
 .sc .num { font-stretch: 85%; }
 .sc .hot { color: var(--signal); font-weight: 600; }
+.sc .watch { color: var(--signal); }
 .mini { display: inline-block; vertical-align: middle; width: 5.5rem; margin-left: 0.5rem; }
 .mini .bar { height: 0.4rem; margin: 0; }
 

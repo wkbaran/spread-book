@@ -26,7 +26,8 @@ Only OptionStrat and Node.js are needed. Everything else is optional.
 |---|---|---|
 | Positions and greeks | [OptionStrat](https://optionstrat.com) Saved Trades, exported as xlsx through its API | Yes. Requires an OptionStrat account |
 | xlsx → CSV conversion | [SheetJS](https://sheetjs.com/) (`xlsx`), the only npm dependency | Yes, runs locally |
-| Underlying prices | [Yahoo Finance](https://finance.yahoo.com/) chart API, for daily P&L attribution | Optional. Free, no key; attribution is skipped without it |
+| Betas | The sibling project equity-watch: its `beta` command asks Schwab and hands the result over through a shared directory | Optional. Saved in the snapshot; nothing in the report uses them yet |
+| Underlying prices | [Yahoo Finance](https://finance.yahoo.com/) chart API, for daily P&L attribution and the distance to each short strike | Optional. Free, no key; attribution and the strike distance are skipped without it |
 | Report font | [Archivo](https://fonts.google.com/specimen/Archivo) from Google Fonts | Loaded by the browser |
 | Hosting | AWS S3 + CloudFront (`cloudformation.yaml`) | Optional. Reports are self-contained HTML files |
 | Scheduling | Docker with [supercronic](https://github.com/aptible/supercronic) | Optional |
@@ -76,11 +77,12 @@ Each report is one self-contained HTML page. It embeds its snapshot as JSON, and
   - *At the stop*: the loss has reached 25% of max loss.
   - *21 days or less*: inside the close-or-roll window.
   - *Getting close*: more than 60% of the way to either exit.
+- **Short strike distance.** Not a decision list. Each spread gets the number of expected moves between the stock and its short strike, `price × IV × √(days ÷ 365)` being one move. Below 0.5 it is highlighted as a heads-up; a negative number means the stock has passed the strike. Hover the column heading, or the label in the spread detail, for what σ means. The threshold is `RULES.strikeSigma` in `book.js`. It needs the underlying's price, which comes from Yahoo and is saved in the snapshot as `spots`, so it is blank for older snapshots and for symbols Yahoo can't price (indexes such as SPX).
 - **Book totals.** Theta per day, delta, gamma, and vega per IV point for the whole book. Each total switches the heatmap below it (keys 1–4 do the same).
 - **Heatmap.** The chosen greek by underlying and expiration, with row and column totals. Each underlying gets one row per spread type, so the two legs of an iron condor stay separate. Delta uses a diverging scale: signal colour for bullish, ink for bearish.
 - **Spread detail.** Click any cell, chart dot, decision or scorecard row to open that spread: progress from the stop to the close target, PoP, credit, max loss, EV, IV, the greeks, and its rank on both quality ratios. Iron condor legs link to each other.
 - **What each spread pays for its risk.** Theta per unit gamma against theta per unit vega. Spreads below the median on both fall in the shaded corner; those are the first to close when you want capital back. The dashed lines are the book's medians, not the chart's midpoint. Spreads with zero gamma or vega are listed under the chart.
-- **Scorecard.** Every spread with days left, PoP, credit, max loss, EV, progress toward an exit, the greeks, IV and both quality ratios, plus book totals. Select a heading to sort. A gain is shown as a share of max profit and a loss as a share of max loss, matching the two exit rules.
+- **Scorecard.** Every spread with days left, PoP, credit, max loss, EV, progress toward an exit, distance to the short strike, the greeks, IV and both quality ratios, plus book totals. Select a heading to sort. A gain is shown as a share of max profit and a loss as a share of max loss, matching the two exit rules.
 - **Try a trade.** Paste one or more rows from the OptionStrat export, comma-separated or copied from Excel. Each trade is added to every total, the heatmap, the chart and the scorecard with a dashed outline, and the totals show how much it changes.
 - **Snapshot menu.** The 14 newest snapshots (about a week at two runs per trading day). Choosing one redraws the page in place in the current design, and the choice is kept in the URL (`?snapshot=<base>`) so it can be linked.
 
@@ -104,9 +106,10 @@ Each report is one self-contained HTML page. It embeds its snapshot as JSON, and
 | `rules`, `glossary` | The exit thresholds and what each field means, so an agent doesn't have to guess |
 | `summary` | Counts for each decision list, plus the spreads closest to the target and to the stop |
 | `decisions` | `readyToClose`, `atStop`, `inRollWindow` and `gettingClose`, in the same order as the report |
+| `watch` | `nearShortStrike`: spreads inside the strike-distance warning, closest first. Informational, not an exit rule |
 | `totals`, `concentration` | Book greeks, then greeks and theta share by underlying and by expiration |
 | `pnl` | Attribution since the previous run: totals, the biggest movers, and spreads opened or closed |
-| `positions` | Every spread with its derived numbers, nearest expiration first |
+| `positions` | Every spread with its derived numbers, including `sigmaToShortStrike`, nearest expiration first |
 | `links` | The HTML report, full snapshot and P&L JSON, relative to `latest.json` |
 
 The decision lists come from `book.js`, the same code the report page runs, so the two always agree. Each run also keeps its own copy as `<base>-brief.json`.
@@ -115,41 +118,57 @@ The decision lists come from `book.js`, the same code the report page runs, so t
 
 | Script | Input | Output |
 |---|---|---|
-| `run.sh` | — | Full pipeline: download, portfolio report, daily P&L |
-| `publish.sh` | — | `run.sh`, then upload to S3, regenerate the index and invalidate CloudFront |
+| `run.sh` | — | Both jobs in turn, for a local run: `fetch.sh`, then `report.sh` |
+| `fetch.sh` | `.env` | Job 1: `data/*.csv` from OptionStrat, and `shared/underlyings.txt` for equity-watch's beta job when `shared/` exists |
+| `report.sh [csv]` | The newest CSV, or the one named | Job 2's analysis: portfolio report, daily P&L and the brief. With no argument it refuses a CSV more than `MAX_AGE_MIN` (default 90) minutes old, because that means `fetch.sh` failed |
+| `publish.sh [csv]` | The same | `report.sh`, then upload to S3, regenerate the index and invalidate CloudFront. Job 2 |
+| `betas.js` | CSV, `shared/betas.json` | Writes the underlyings list for equity-watch (`write-underlyings <csv> <file>`); `portfolio.js` uses it to read the betas back |
 | `download.js` | `.env` | `data/*.csv` (exports Group: Live from OptionStrat, converts xlsx → CSV) |
-| `portfolio.js <csv>` | CSV file | `reports/*-portfolio.html`, `*-portfolio.json` and `*-prices.json` |
+| `portfolio.js <csv>` | CSV file | `reports/*-portfolio.html`, `*-portfolio.json` (the positions, plus the underlying prices as `spots`) and `*-prices.json` |
 | `daily-pnl.js` | Two newest snapshots | `reports/*-daily-pnl.html` and `<base>-pnl.json`, P&L attribution between runs |
 | `brief.js` | Newest snapshot and its P&L | `reports/<base>-brief.json` and `latest.json`, the [brief for agents](#the-brief-for-agents) |
 | `generate-index.js` | File list | `reports/index.html`, `archive.html`, `snapshots.json` |
-| `book.js` | — | Exit rules and derived numbers, shared by `report.js` and `brief.js` |
+| `book.js` | — | Exit rules, strike distance and derived numbers, shared by `report.js` and `brief.js` |
 | `report.js`, `report.css`, `theme.css`, `palette.js` | — | Inlined into every report |
 | `index.js`, `whatif.js` | CSV file | The legacy heatmaps report |
 
 ```
 data/       source CSVs (gitignored)
+test/       unit tests for book.js
 reports/    generated reports, JSON snapshots and index.html (gitignored)
 docker/     Dockerfile, compose file, crontab and env template for scheduled publishing
+shared/     the directory shared with equity-watch (gitignored; a bind mount in the container)
 docs/       README screenshots
 ```
 
+## Tests
+
+`npm test` runs the unit tests in `test/` with Node's built-in runner, so there is nothing to install. They cover `book.js` (the exit rules and the strike distance, including the cases where it is blank) and `betas.js` (the underlyings list and reading the betas file). The report page, `portfolio.js` and `brief.js` have no automated tests; check them by running the pipeline on a sample CSV from `data/` and opening the result.
+
 ## Scheduled publishing (Docker)
 
-The `docker/` directory runs `publish.sh` on a schedule, publishing to the S3 bucket and CloudFront site described under [AWS](#aws).
+The `docker/` directory publishes to the S3 bucket and CloudFront site described under [AWS](#aws) as two scheduled jobs, with equity-watch's beta job between them:
+
+1. **`fetch.sh`** at 7:45 AM and 1:25 PM: downloads the open spreads from OptionStrat and writes `shared/underlyings.txt`.
+2. **equity-watch's beta job**, in its own container at 8:05 AM and 2:05 PM: reads that list and writes `shared/betas.json`.
+3. **`publish.sh`** at 8:10 AM and 2:10 PM: builds the report from the CSV job 1 left, reads the betas, and uploads.
+
+Job 2 never downloads, and it refuses a CSV more than 90 minutes old, so a failed download can't republish an old export as new. A missing or old `betas.json` doesn't stop the report. The snapshot records when the betas were computed. Prices (and so the strike distance) are fetched when job 2 runs, 25 to 45 minutes after the positions.
 
 | File | Purpose |
 |---|---|
 | `docker/Dockerfile` | Node 24 Alpine image with the AWS CLI and supercronic |
-| `docker/compose.yaml` | Runs the container; `data/` and `reports/` are bind-mounted from `~/spread-book/` on the Docker host |
-| `docker/crontab` | 7:45 AM and 1:25 PM Mountain, weekdays |
-| `docker/.env.example` | Template for `docker/.env` (OptionStrat and AWS credentials) |
+| `docker/compose.yaml` | Runs the container; `data/` and `reports/` are bind-mounted from `~/spread-book/` on the Docker host, and `SHARED_DIR` from `docker/.env` is mounted at `/app/shared` for the files exchanged with equity-watch |
+| `docker/crontab` | `fetch.sh` at 7:45 AM and 1:25 PM, `publish.sh` at 8:10 AM and 2:10 PM, Mountain, weekdays |
+| `docker/.env.example` | Template for `docker/.env` (OptionStrat and AWS credentials, and `SHARED_DIR`) |
 
 The container runs with `TZ=America/Denver`, so the crontab is in local time and DST is handled automatically. The bind-mounted directories persist between runs, so `daily-pnl.js` always has an earlier snapshot to compare against.
 
 ```bash
 cp docker/.env.example docker/.env      # fill in credentials
 docker compose -f docker/compose.yaml up -d --build
-docker compose -f docker/compose.yaml exec spread-book /app/publish.sh   # publish now
+docker compose -f docker/compose.yaml exec spread-book /app/fetch.sh     # download now
+docker compose -f docker/compose.yaml exec spread-book /app/publish.sh   # then publish it
 docker compose -f docker/compose.yaml logs -f
 ```
 
