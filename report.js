@@ -18,8 +18,7 @@
   const signed = (v, dp = 2) => (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(dp);
   const pct = (v) => signed(v, 0) + "%";
   const money = (v) => { const r = Math.round(v); return (r < 0 ? "−$" : "$") + Math.abs(r).toLocaleString(); };
-  const sum = (list, k) => list.reduce((s, p) => s + p[k], 0);
-  const median = (xs) => { const s = [...xs].sort((a, b) => a - b); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+  const { counts, addUp } = SB; // the arithmetic lives in book.js, where tests can reach it
   const expLabel = (iso) => new Date(iso + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
   const snapLabel = (iso) => new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
   // Gains as a share of max profit, losses as a share of max loss.
@@ -67,10 +66,7 @@
     bwDelta: { name: "Beta-weighted delta", unit: "SPY shares", help: "How many shares of SPY the book behaves like. Positive gains if the market rises.", title: "Beta-weighted delta by underlying and expiration", note: "Delta turned into SPY shares so different stocks can be compared. Bright cells lean bullish, dark cells lean bearish. The total row shows how hard each expiration leans on the market.", dp: 1, diverging: true },
   };
 
-  // A spread without a beta has no beta-weighted delta (null). It is left out of every sum for that view
-  // and shown as a dash, so a total never looks more complete than it is.
-  const counts = (p, k) => p[k] !== null && p[k] !== undefined;
-  const addUp = (ps, k) => sum(ps.filter((p) => counts(p, k)), k);
+  // A spread without a beta is left out of every sum for that view and shown as a dash.
   const totalText = (ps, k, dp) => (ps.some((p) => counts(p, k)) ? fmt(addUp(ps, k), dp) : "—");
 
   function renderBook() {
@@ -130,16 +126,8 @@
   // One row per underlying and spread type, so the two legs of an iron condor stay apart.
   function renderHeat() {
     const g = GREEKS[greek], list = all();
-    const exps = [...new Set(list.map((p) => p.expiration))].sort();
-    const rows = [...new Set(list.map((p) => p.underlying + "|" + p.kind))].map((k) => { const [u, kind] = k.split("|"); return { u, kind, ps: list.filter((p) => p.underlying === u && p.kind === kind) }; });
-    rows.forEach((r) => (r.total = addUp(r.ps, greek)));
-    rows.forEach((r) => (r.has = r.ps.some((p) => counts(p, greek))));
-    // Rows with nothing to add (no beta) go last, not in the middle at zero.
-    rows.sort((a, b) => (a.has !== b.has ? (a.has ? -1 : 1) : g.diverging ? b.total - a.total : Math.abs(b.total) - Math.abs(a.total)));
-    const cellVals = rows.flatMap((r) => exps.map((e) => addUp(r.ps.filter((p) => p.expiration === e), greek)));
-    const max = Math.max(...cellVals.map(Math.abs), 1e-9);
+    const { exps, rows, max, covered } = SB.heatmap(list, greek, !!g.diverging);
     $("grid-title").textContent = g.title;
-    const covered = list.filter((p) => counts(p, greek)).length;
     $("grid-note").textContent = g.note + (covered === list.length ? "" : covered ? ` ${covered} of ${list.length} spreads have a beta. The rest show a dash and are left out of every total.` : " No spread has a beta, so every cell is a dash.");
     $("legend").innerHTML = g.diverging
       ? `bearish <i style="background:linear-gradient(90deg, color-mix(in oklab, var(--ink) 88%, var(--surface)), var(--surface), color-mix(in oklab, var(--signal) 88%, var(--surface)))"></i> bullish`
@@ -166,9 +154,8 @@
     return `<div class="bar" aria-hidden="true">${fill}<span class="zero" style="left:50%"></span></div>`;
   }
   function rankOf(p, key) {
-    if (p[key] === null) return "";
-    const ranked = all().filter((x) => x[key] !== null).sort((a, b) => b[key] - a[key]);
-    return `<span class="rank">${ranked.indexOf(p) + 1} of ${ranked.length}</span>`;
+    const r = SB.rank(all(), p, key);
+    return r ? `<span class="rank">${r.pos} of ${r.of}</span>` : "";
   }
   function renderDetail() {
     const p = all().find((x) => x.id === selected);
@@ -216,32 +203,26 @@
 
   // ---- quality scatter -------------------------------------------------------
   function renderPlot() {
-    const skipped = all().filter((p) => p.tg === null || p.tv === null);
-    const list = all().filter((p) => p.tg !== null && p.tv !== null);
-    if (!list.length) { $("plot").innerHTML = `<p class="plot-note">No spread has both gamma and vega, so there's nothing to plot.</p>`; return; }
+    const list = all();
+    const m = SB.plotModel(list);
+    if (!m) { $("plot").innerHTML = `<p class="plot-note">No spread has both gamma and vega, so there's nothing to plot.</p>`; return; }
+    const { px, py, xMax, yMax, mx, my, xTicks: xt, yTicks: yt } = m;
     const W = 640, H = 300, pad = { l: 44, r: 16, t: 14, b: 36 };
-    const xStep = Math.max(...list.map((p) => p.tg)) > 20 ? 5 : 2;
-    const xMax = Math.max(xStep, Math.ceil((Math.max(...list.map((p) => p.tg)) * 1.08) / xStep) * xStep);
-    const yMax = Math.max(0.5, Math.ceil(Math.max(...list.map((p) => p.tv)) * 1.05 * 2) / 2);
     const x = (v) => pad.l + (v / xMax) * (W - pad.l - pad.r), y = (v) => H - pad.b - (v / yMax) * (H - pad.t - pad.b);
-    const real = list.filter((p) => !p.hypo);
-    const mx = median((real.length ? real : list).map((p) => p.tg)), my = median((real.length ? real : list).map((p) => p.tv));
-    const xt = Array.from({ length: xMax / xStep + 1 }, (_, i) => i * xStep);
-    const yStep = yMax > 3 ? 1 : 0.5, yt = Array.from({ length: Math.floor(yMax / yStep) + 1 }, (_, i) => i * yStep);
     // Labels try right, left, above, then below the dot, taking the first spot that is free.
-    const boxes = list.map((p) => ({ x0: x(p.tg) - 7, x1: x(p.tg) + 7, y0: y(p.tv) - 7, y1: y(p.tv) + 7 }));
+    const boxes = list.map((p) => ({ x0: x(px(p)) - 7, x1: x(px(p)) + 7, y0: y(py(p)) - 7, y1: y(py(p)) + 7 }));
     const hits = (b) => b.x0 < pad.l || b.x1 > W || b.y0 < 0 || boxes.some((o) => b.x0 < o.x1 && b.x1 > o.x0 && b.y0 < o.y1 && b.y1 > o.y0);
     // Name the leg when an underlying has both a put and a call spread.
     const twice = new Set(list.filter((p) => list.some((o) => o.underlying === p.underlying && o.kind !== p.kind)).map((p) => p.underlying));
     const dots = list.map((p) => {
       const name = twice.has(p.underlying) ? `${p.underlying} ${p.kind}` : p.underlying;
-      const cx = x(p.tg), cy = y(p.tv), w = name.length * 7 + 2;
+      const cx = x(px(p)), cy = y(py(p)), w = name.length * 7 + 2;
       const spots = [[cx + 8, cy + 4, "start"], [cx - 8, cy + 4, "end"], [cx, cy - 10, "middle"], [cx, cy + 18, "middle"]];
       const box = ([lx, ly, a]) => { const x0 = a === "start" ? lx : a === "end" ? lx - w : lx - w / 2; return { x0, x1: x0 + w, y0: ly - 10, y1: ly + 2 }; };
       const spot = spots.find((sp) => !hits(box(sp))) ?? spots[0];
       boxes.push(box(spot));
-      const weak = !p.hypo && p.tg < mx && p.tv < my;
-      return `<g><circle class="dot ${weak ? "weak" : ""} ${p.hypo ? "hypo" : ""} ${p.id === selected ? "sel" : ""}" data-id="${p.id}" cx="${cx}" cy="${cy}" r="${p.id === selected ? 7 : 5}" tabindex="0" role="button" aria-label="${esc(p.name)}"><title>${esc(p.name)}</title></circle><text class="lbl" x="${spot[0]}" y="${spot[1]}" text-anchor="${spot[2]}">${esc(name)}</text></g>`;
+      const unmeasured = m.unmeasured(p), weak = m.weak(p);
+      return `<g><circle class="dot ${weak ? "weak" : ""} ${p.hypo ? "hypo" : ""} ${p.id === selected ? "sel" : ""}" data-id="${p.id}" cx="${cx}" cy="${cy}" r="${p.id === selected ? 7 : 5}" tabindex="0" role="button" aria-label="${esc(p.name)}"><title>${esc(p.name)}${unmeasured ? ` (no ${p.tg === null ? "gamma" : "vega"}, plotted at 0)` : ""}</title></circle><text class="lbl" x="${spot[0]}" y="${spot[1]}" text-anchor="${spot[2]}">${esc(name)}</text></g>`;
     }).join("");
     $("plot").innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Theta per gamma against theta per vega for each spread">
       <rect class="zone" x="${pad.l}" y="${y(my)}" width="${x(mx) - pad.l}" height="${H - pad.b - y(my)}" rx="3"/>
@@ -254,7 +235,7 @@
       ${yt.map((v) => `<text x="${pad.l - 8}" y="${y(v) + 4}" text-anchor="end">${v.toFixed(1)}</text>`).join("")}
       <text x="${W - pad.r}" y="${H - 4}" text-anchor="end">theta per unit gamma</text>
       <text transform="translate(10 ${(pad.t + H - pad.b) / 2}) rotate(-90)" text-anchor="middle">theta per unit vega</text>
-      ${dots}</svg>${skipped.length ? `<p class="plot-note">${skipped.map((p) => esc(p.underlying)).join(", ")} ${skipped.length > 1 ? "have" : "has"} no measurable gamma or vega, so ${skipped.length > 1 ? "they are" : "it is"} left off the chart.</p>` : ""}`;
+      ${dots}</svg>`;
   }
   $("plot").addEventListener("click", (e) => { const d = e.target.closest(".dot"); if (d) select(d.dataset.id); });
   $("plot").addEventListener("keydown", (e) => { const d = e.target.closest(".dot"); if (d && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); select(d.dataset.id); } });
@@ -267,12 +248,7 @@
   const ASC_FIRST = ["underlying", "strikes", "dte", "z"];
   function renderScorecard() {
     const list = all();
-    const rows = [...list].sort((a, b) => {
-      // Missing ratios sort last whichever way the column is sorted.
-      const va = a[sort.key] ?? Infinity * sort.dir, vb = b[sort.key] ?? Infinity * sort.dir;
-      const d = typeof va === "string" ? va.localeCompare(vb) : va - vb;
-      return d * sort.dir || a.dte - b.dte || b.theta - a.theta;
-    });
+    const rows = SB.sortSpreads(list, sort.key, sort.dir);
     const head = `<thead><tr>${COLS.map(([k, l, tip]) => `<th scope="col" ${sort.key === k ? `aria-sort="${sort.dir > 0 ? "ascending" : "descending"}"` : ""}><button type="button" data-k="${k}"${tip ? ` title="${tip}"` : ""}>${l}</button></th>`).join("")}</tr></thead>`;
     const body = rows.map((p) => `<tr data-id="${p.id}" class="${p.id === selected ? "sel" : ""} ${p.hypo ? "hypo" : ""}">
       <td class="sym">${esc(p.underlying)}</td><td class="kind">${esc(p.strikes)} ${p.kind}${p.condor ? `<span class="tag">iron condor</span>` : ""}${p.hypo ? `<span class="tag">trial</span>` : ""}</td>
@@ -281,12 +257,11 @@
       <td class="num ${p.nearStrike ? "watch" : ""}" title="${p.z === null ? "No price for this underlying" : `Short strike $${p.shortStrike}, ${sigma(p)} away in expected moves`}">${sigma(p)}</td>
       <td class="num">${fmt(p.theta)}</td><td class="num">${fmt(p.delta, 1)}</td><td class="num">${p.bwDelta === null ? "—" : fmt(p.bwDelta, 1)}</td><td class="num">${fmt(p.gamma)}</td><td class="num">${fmt(p.vega)}</td>
       <td class="num">${p.iv.toFixed(0)}%</td><td class="num">${p.tg === null ? "—" : p.tg.toFixed(2)}</td><td class="num">${p.tv === null ? "—" : p.tv.toFixed(2)}</td></tr>`).join("");
-    const bwHave = list.filter((p) => p.bwDelta !== null);
-    const n = list.length || 1, tTot = sum(list, "theta"), gTot = sum(list, "gamma"), vTot = sum(list, "vega");
-    const foot = `<tfoot><tr><td>Book</td><td class="kind">${list.length} spreads</td><td></td>
-      <td class="num">${Math.round((sum(list, "chance") / n) * 100)}%<span class="avg">avg</span></td><td class="num">${money(sum(list, "credit"))}</td><td class="num">${money(sum(list, "maxLoss"))}</td><td class="num">${money(sum(list, "ev"))}</td><td></td><td></td>
-      <td class="num">${fmt(tTot)}</td><td class="num">${fmt(sum(list, "delta"), 1)}</td><td class="num">${bwHave.length ? fmt(sum(bwHave, "bwDelta"), 1) : "—"}${bwHave.length && bwHave.length < list.length ? `<span class="avg">${bwHave.length}/${list.length}</span>` : ""}</td><td class="num">${fmt(gTot)}</td><td class="num">${fmt(vTot)}</td>
-      <td class="num">${(sum(list, "iv") / n).toFixed(0)}%<span class="avg">avg</span></td><td class="num">${gTot ? (tTot / Math.abs(gTot)).toFixed(2) : "—"}</td><td class="num">${vTot ? (tTot / Math.abs(vTot)).toFixed(2) : "—"}</td></tr></tfoot>`;
+    const t = SB.bookTotals(list);
+    const foot = `<tfoot><tr><td>Book</td><td class="kind">${t.count} spreads</td><td></td>
+      <td class="num">${Math.round(t.avgChance * 100)}%<span class="avg">avg</span></td><td class="num">${money(t.credit)}</td><td class="num">${money(t.maxLoss)}</td><td class="num">${money(t.ev)}</td><td></td><td></td>
+      <td class="num">${fmt(t.theta)}</td><td class="num">${fmt(t.delta, 1)}</td><td class="num">${t.bwCount ? fmt(t.bwDelta, 1) : "—"}${t.bwCount && t.bwCount < t.count ? `<span class="avg">${t.bwCount}/${t.count}</span>` : ""}</td><td class="num">${fmt(t.gamma)}</td><td class="num">${fmt(t.vega)}</td>
+      <td class="num">${t.avgIv.toFixed(0)}%<span class="avg">avg</span></td><td class="num">${t.thetaPerGamma === null ? "—" : t.thetaPerGamma.toFixed(2)}</td><td class="num">${t.thetaPerVega === null ? "—" : t.thetaPerVega.toFixed(2)}</td></tr></tfoot>`;
     $("sc").innerHTML = head + `<tbody>${body}</tbody>` + foot;
   }
   $("sc").addEventListener("click", (e) => {
@@ -296,37 +271,10 @@
   });
 
   // ---- trial trades ----------------------------------------------------------
-  // Parses a row from the OptionStrat export, comma- or tab-separated (an Excel paste).
-  // 0:Name 1:Return% 2:Return$ 3:CreatedAt 4:Expiration 5:NetCredit 6:Chance 7:MaxLoss 8:MaxProfit ... 11:Delta 12:Theta 13:Gamma 14:Vega 15:Rho 16:IV
-  function parseCSVLine(line) {
-    if (line.includes("\t")) return line.split("\t").map((s) => s.trim());
-    const out = []; let cur = "", q = false;
-    for (const c of line) {
-      if (c === '"') q = !q;
-      else if (c === "," && !q) { out.push(cur.trim()); cur = ""; }
-      else cur += c;
-    }
-    out.push(cur.trim());
-    return out;
-  }
-  const parsePct = (s) => parseFloat((s || "").replace("%", "")) || 0;
-  const parseDollar = (s) => (s && s.includes("(") ? -1 : 1) * (parseFloat((s || "").replace(/[^0-9.]/g, "")) || 0);
-  function parseRow(line) {
-    const v = parseCSVLine(line), name = (v[0] || "").trim();
-    if (!name || !name.toLowerCase().includes("spread")) return null;
-    if (!/^\d{1,2}\/\d{1,2}\/\d{2,4}|^\d{4}-\d{2}-\d{2}/.test(v[4] || "")) return null;
-    return {
-      name, underlying: name.split(" ")[0], expiration: v[4],
-      type: name.includes("Bull Put") ? "Bull Put" : name.includes("Bear Call") ? "Bear Call" : "Other",
-      returnPct: parsePct(v[1]), credit: Math.abs(parseDollar(v[5])), chance: parsePct(v[6]) / 100,
-      maxLoss: Math.abs(parseDollar(v[7])), maxProfit: Math.abs(parseDollar(v[8])),
-      delta: parseFloat(v[11]) || 0, theta: parseFloat(v[12]) || 0, gamma: parseFloat(v[13]) || 0, vega: parseFloat(v[14]) || 0, iv: parsePct(v[16]),
-      hypo: true,
-    };
-  }
+  // Rows pasted from the OptionStrat export become trial trades (SB.parseTrade).
   function addTrial() {
     const lines = $("whatif-text").value.split("\n").map((l) => l.trim()).filter(Boolean);
-    const parsed = lines.map(parseRow);
+    const parsed = lines.map(SB.parseTrade);
     const bad = parsed.filter((p) => !p).length;
     $("whatif-error").hidden = !bad;
     $("whatif-error").textContent = bad ? `${bad === lines.length ? "That row isn't" : `${bad} of ${lines.length} rows aren't`} a spread from the OptionStrat export. Copy the whole row, starting with the spread name.` : "";

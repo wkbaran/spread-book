@@ -81,7 +81,7 @@ Each report is one self-contained HTML page. It embeds its snapshot as JSON, and
 - **Book totals.** Theta per day, delta, gamma, and vega per IV point for the whole book. Each total switches the heatmap below it (keys 1–5 do the same). The fifth card is the beta-weighted delta: the number of SPY shares the book behaves like, from each spread's `delta × beta × (stock price ÷ SPY price)`. Only spreads with a beta count, and the card says how many do.
 - **Heatmap.** The chosen greek by underlying and expiration, with row and column totals. Each underlying gets one row per spread type, so the two legs of an iron condor stay separate. Delta and beta-weighted delta use a diverging scale: signal colour for bullish, ink for bearish. The beta-weighted view puts every stock in one unit (SPY shares), so its totals can be compared across names, which the raw delta totals cannot. A spread without a beta shows a dash and is left out of that view's totals, and the note under the table says how many are missing.
 - **Spread detail.** Click any cell, chart dot, decision or scorecard row to open that spread: progress from the stop to the close target, PoP, credit, max loss, EV, IV, the greeks, and its rank on both quality ratios. Iron condor legs link to each other.
-- **What each spread pays for its risk.** Theta per unit gamma against theta per unit vega. Spreads below the median on both fall in the shaded corner; those are the first to close when you want capital back. The dashed lines are the book's medians, not the chart's midpoint. Spreads with zero gamma or vega are listed under the chart.
+- **What each spread pays for its risk.** Theta per unit gamma against theta per unit vega. Spreads below the median on both fall in the shaded corner; those are the first to close when you want capital back. The dashed lines are the book's medians, not the chart's midpoint. A spread whose export shows zero gamma (or vega) has no ratio, so its dot sits on the axis at 0; it is left out of the medians and the shaded corner.
 - **Scorecard.** Every spread with days left, PoP, credit, max loss, EV, progress toward an exit, distance to the short strike, the greeks (with a beta-weighted delta column), IV and both quality ratios, plus book totals. Select a heading to sort. A gain is shown as a share of max profit and a loss as a share of max loss, matching the two exit rules.
 - **Try a trade.** Paste one or more rows from the OptionStrat export, comma-separated or copied from Excel. Each trade is added to every total, the heatmap, the chart and the scorecard with a dashed outline, and the totals show how much it changes.
 - **Snapshot menu.** The 14 newest snapshots (about a week at two runs per trading day). Choosing one redraws the page in place in the current design, and the choice is kept in the URL (`?snapshot=<base>`) so it can be linked.
@@ -135,13 +135,14 @@ The same name, expiration and strikes is one spread until an *episode break* sta
 | `daily-pnl.js` | Two newest snapshots | `reports/*-daily-pnl.html` and `<base>-pnl.json`, P&L attribution between runs |
 | `brief.js` | Newest snapshot and its P&L | `reports/<base>-brief.json` and `latest.json`, the [brief for agents](#the-brief-for-agents) |
 | `generate-index.js` | File list | `reports/index.html`, `archive.html`, `snapshots.json` |
-| `book.js` | — | Exit rules, strike distance and derived numbers, shared by `report.js` and `brief.js` |
+| `book.js` | — | Exit rules, strike distance, history and the calculations the page draws, shared by `report.js` and `brief.js` |
+| `page.js` | A snapshot | The report's HTML shell, with the styles, snapshot and scripts inlined. `portfolio.js` writes it; the page tests build it |
 | `report.js`, `report.css`, `theme.css`, `palette.js` | — | Inlined into every report |
 | `index.js`, `whatif.js` | CSV file | The legacy heatmaps report |
 
 ```
 data/       source CSVs (gitignored)
-test/       unit tests for book.js
+test/       unit and page tests (jsdom)
 reports/    generated reports, JSON snapshots and index.html (gitignored)
 docker/     Dockerfile, compose file, crontab and env template for scheduled publishing
 shared/     the directory shared with equity-watch (gitignored; a bind mount in the container)
@@ -150,7 +151,14 @@ docs/       README screenshots
 
 ## Tests
 
-`npm test` runs the unit tests in `test/` with Node's built-in runner, so there is nothing to install. They cover `book.js` (the exit rules, the strike distance, the beta-weighted delta and the sizing numbers, including the cases where each is blank; and the history behind `entry` and `closed`: the unknown entry, the dedupe, the 60-day window and the episode breaks) and `betas.js` (the underlyings list and reading the betas file). The report page, `portfolio.js` and `brief.js` have no automated tests; check them by running the pipeline on a sample CSV from `data/` and opening the result.
+`npm test` runs the tests in `test/` with Node's built-in runner. They need `npm ci` first, because the page tests use [jsdom](https://github.com/jsdom/jsdom), a dev-only dependency that the Docker image leaves out (`npm ci --omit=dev`). jsdom wants Node 22.22.2, 24.15 or 26+.
+
+- **`book.test.js`, `history.test.js`**: `book.js`'s exit rules, strike distance, beta-weighted delta and sizing numbers, including the cases where each is blank, and the history behind `entry` and `closed` (the unknown entry, the dedupe, the 60-day window and the episode breaks).
+- **`calc.test.js`**: the calculations the report page draws, also in `book.js`: the heatmap grid and its ordering, ranks, the chart's scaling and medians, scorecard sorting and totals, and the trial-trade parser.
+- **`page.test.js`**: builds a report from a synthetic book (`fixture.js`) exactly as `portfolio.js` does, runs its scripts in jsdom, and clicks through it. It checks that every spread is drawn, that the page's totals and decision lists match what `brief.js` writes for the same snapshot, and that the greek keys, sorting, trial trades and the snapshot menu work, including a book with no betas and one with no gamma.
+- **`betas.test.js`**: the underlyings list and reading the betas file.
+
+The page tests check what the page draws, not how it looks: colours, layout and the font need a browser. `portfolio.js` itself (the CSV parsing and the Yahoo fetch) has no automated tests; check it by running the pipeline on a sample CSV from `data/` and opening the result.
 
 ## Scheduled publishing (Docker)
 

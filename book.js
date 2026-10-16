@@ -124,6 +124,116 @@
     };
   }
 
+  // ---- what the report page draws ----------------------------------------------------------------
+  // Pure calculations from report.js, kept here so tests can reach them without a browser.
+
+  const sumOf = (list, k) => list.reduce((s, p) => s + p[k], 0);
+  const median = (xs) => { const s = [...xs].sort((a, b) => a - b); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+
+  // A spread without a beta has no beta-weighted delta (null). It is left out of every sum for that view,
+  // so a total never looks more complete than it is.
+  const counts = (p, k) => p[k] !== null && p[k] !== undefined;
+  const addUp = (ps, k) => sumOf(ps.filter((p) => counts(p, k)), k);
+
+  // The heatmap grid for one greek: expirations across, one row per underlying and spread kind (so an iron
+  // condor's two legs stay apart), each row's total, and the largest cell for scaling the colours.
+  // Rows with nothing to add (no beta) go last, not in the middle at zero. diverging greeks (delta) run
+  // from most bullish to most bearish; the rest from the largest magnitude down.
+  function heatmap(list, key, diverging) {
+    const exps = [...new Set(list.map((p) => p.expiration))].sort();
+    const rows = [...new Set(list.map((p) => p.underlying + "|" + p.kind))].map((k) => {
+      const [u, kind] = k.split("|");
+      return { u, kind, ps: list.filter((p) => p.underlying === u && p.kind === kind) };
+    });
+    rows.forEach((r) => { r.total = addUp(r.ps, key); r.has = r.ps.some((p) => counts(p, key)); });
+    rows.sort((a, b) => (a.has !== b.has ? (a.has ? -1 : 1) : diverging ? b.total - a.total : Math.abs(b.total) - Math.abs(a.total)));
+    const cells = rows.flatMap((r) => exps.map((e) => addUp(r.ps.filter((p) => p.expiration === e), key)));
+    return { exps, rows, max: Math.max(...cells.map(Math.abs), 1e-9), covered: list.filter((p) => counts(p, key)).length };
+  }
+
+  // Where p stands on a ratio among the list, best first: { pos, of }. null when p has no value.
+  function rank(list, p, key) {
+    if (p[key] === null) return null;
+    const ranked = list.filter((x) => x[key] !== null).sort((a, b) => b[key] - a[key]);
+    return { pos: ranked.indexOf(p) + 1, of: ranked.length };
+  }
+
+  // The theta-per-gamma against theta-per-vega scatter, in data units. A spread with no gamma (or vega)
+  // has no ratio: it sits on the axis at 0, and the medians and the shaded corner come only from the spreads
+  // that were measured. Trial trades (hypo) stay out of the medians when there are real spreads. null when
+  // nothing was measured.
+  function plotModel(list) {
+    const measured = list.filter((p) => p.tg !== null && p.tv !== null);
+    if (!measured.length) return null;
+    const px = (p) => p.tg ?? 0, py = (p) => p.tv ?? 0;
+    const xStep = Math.max(...measured.map(px)) > 20 ? 5 : 2;
+    const xMax = Math.max(xStep, Math.ceil((Math.max(...measured.map(px)) * 1.08) / xStep) * xStep);
+    const yMax = Math.max(0.5, Math.ceil(Math.max(...measured.map(py)) * 1.05 * 2) / 2);
+    const yStep = yMax > 3 ? 1 : 0.5;
+    const real = measured.filter((p) => !p.hypo);
+    const basis = real.length ? real : measured;
+    const mx = median(basis.map(px)), my = median(basis.map(py));
+    const unmeasured = (p) => p.tg === null || p.tv === null;
+    return {
+      px, py, xStep, xMax, yStep, yMax, mx, my, unmeasured,
+      xTicks: Array.from({ length: xMax / xStep + 1 }, (_, i) => i * xStep),
+      yTicks: Array.from({ length: Math.floor(yMax / yStep) + 1 }, (_, i) => i * yStep),
+      weak: (p) => !p.hypo && !unmeasured(p) && p.tg < mx && p.tv < my,
+    };
+  }
+
+  // Scorecard order. Missing ratios sort last whichever way the column is sorted.
+  function sortSpreads(list, key, dir) {
+    return [...list].sort((a, b) => {
+      const va = a[key] ?? Infinity * dir, vb = b[key] ?? Infinity * dir;
+      const d = typeof va === "string" ? va.localeCompare(vb) : va - vb;
+      return d * dir || a.dte - b.dte || b.theta - a.theta;
+    });
+  }
+
+  // The scorecard's Book row. bwDelta adds up only the spreads that have a beta (bwCount of count).
+  function bookTotals(list) {
+    const n = list.length || 1, theta = sumOf(list, "theta"), gamma = sumOf(list, "gamma"), vega = sumOf(list, "vega");
+    const bw = list.filter((p) => p.bwDelta !== null);
+    return {
+      count: list.length, avgChance: sumOf(list, "chance") / n, credit: sumOf(list, "credit"), maxLoss: sumOf(list, "maxLoss"),
+      ev: sumOf(list, "ev"), theta, delta: sumOf(list, "delta"), gamma, vega,
+      bwDelta: bw.length ? sumOf(bw, "bwDelta") : null, bwCount: bw.length,
+      avgIv: sumOf(list, "iv") / n,
+      thetaPerGamma: gamma ? theta / Math.abs(gamma) : null, thetaPerVega: vega ? theta / Math.abs(vega) : null,
+    };
+  }
+
+  // A row pasted from the OptionStrat export, comma- or tab-separated (an Excel paste), as a trial trade.
+  // 0:Name 1:Return% 2:Return$ 3:CreatedAt 4:Expiration 5:NetCredit 6:Chance 7:MaxLoss 8:MaxProfit ... 11:Delta 12:Theta 13:Gamma 14:Vega 15:Rho 16:IV
+  // null when the line isn't a spread row.
+  function csvFields(line) {
+    if (line.includes("\t")) return line.split("\t").map((s) => s.trim());
+    const out = []; let cur = "", q = false;
+    for (const c of line) {
+      if (c === '"') q = !q;
+      else if (c === "," && !q) { out.push(cur.trim()); cur = ""; }
+      else cur += c;
+    }
+    out.push(cur.trim());
+    return out;
+  }
+  const parsePct = (s) => parseFloat((s || "").replace("%", "")) || 0;
+  const parseDollar = (s) => (s && s.includes("(") ? -1 : 1) * (parseFloat((s || "").replace(/[^0-9.]/g, "")) || 0);
+  function parseTrade(line) {
+    const v = csvFields(line), name = (v[0] || "").trim();
+    if (!name || !name.toLowerCase().includes("spread")) return null;
+    if (!/^\d{1,2}\/\d{1,2}\/\d{2,4}|^\d{4}-\d{2}-\d{2}/.test(v[4] || "")) return null;
+    return {
+      name, underlying: name.split(" ")[0], expiration: v[4],
+      type: name.includes("Bull Put") ? "Bull Put" : name.includes("Bear Call") ? "Bear Call" : "Other",
+      returnPct: parsePct(v[1]), credit: Math.abs(parseDollar(v[5])), chance: parsePct(v[6]) / 100,
+      maxLoss: Math.abs(parseDollar(v[7])), maxProfit: Math.abs(parseDollar(v[8])),
+      delta: parseFloat(v[11]) || 0, theta: parseFloat(v[12]) || 0, gamma: parseFloat(v[13]) || 0, vega: parseFloat(v[14]) || 0, iv: parsePct(v[16]),
+      hypo: true,
+    };
+  }
+
   // One spread across snapshots: the same name, expiration and strikes.
   const spreadKey = (p) => [p.name, p.expiration, p.strikes].join("|");
 
@@ -200,7 +310,8 @@
     return { open, closed };
   }
 
-  const api = { RULES, isoDate, fromDenver, takenAt, enrich, tagCondors, decide, spreadKey, history };
+  const api = { RULES, isoDate, fromDenver, takenAt, enrich, tagCondors, decide, spreadKey, history,
+    sumOf, median, counts, addUp, heatmap, rank, plotModel, sortSpreads, bookTotals, parseTrade };
   if (typeof module === "object" && module.exports) module.exports = api;
   else globalThis.SpreadBook = api;
 })();
