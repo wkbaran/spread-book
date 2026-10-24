@@ -13,8 +13,9 @@ echo "==> $(date '+%Y-%m-%d %H:%M:%S %Z') starting publish"
 
 bash report.sh "$@"
 
-echo "==> Uploading data and reports to s3://$BUCKET/"
-aws s3 sync data/ "s3://$BUCKET/data/" --only-show-errors
+echo "==> Uploading reports to s3://$BUCKET/"
+# Not data/: the raw exports hold the OptionStrat saved-trade links, quantities and entry prices, and the site
+# is public. They stay on the Docker host's bind mount, where fetch.sh and report.sh need them.
 # index, archive and snapshot list are rebuilt from the full S3 listing below; the local copies only know this volume
 aws s3 sync reports/ "s3://$BUCKET/" --exclude 'index.html' --exclude 'archive.html' --exclude 'snapshots.json' --exclude 'latest.json' --only-show-errors
 # The brief for agents; it changes every run under the same name, like index.html
