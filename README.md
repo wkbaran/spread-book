@@ -26,6 +26,7 @@ Only OptionStrat and Node.js are needed. Everything else is optional.
 |---|---|---|
 | Positions and greeks | [OptionStrat](https://optionstrat.com) Saved Trades, exported as xlsx through its API | Yes. Requires an OptionStrat account |
 | xlsx → CSV conversion | [SheetJS](https://sheetjs.com/) (`xlsx`), the only npm dependency | Yes, runs locally |
+| Stop alerts | The sibling project equity-watch watches each spread's stop level every 15 minutes, from `shared/spread-alerts.json` | Optional. Without a shared directory nothing is written |
 | Betas | The sibling project equity-watch: its `beta` command asks Schwab and hands the result over through a shared directory | Optional. Weights each spread's delta; the column is blank for a spread without a beta, or when the betas are more than 10 days old |
 | Underlying prices | [Yahoo Finance](https://finance.yahoo.com/) chart API, for daily P&L attribution, the distance to each short strike, and SPY's price for beta-weighting | Optional. Free, no key; those features are skipped without it |
 | Report font | [Archivo](https://fonts.google.com/specimen/Archivo) from Google Fonts | Loaded by the browser |
@@ -136,7 +137,8 @@ The same name, expiration and strikes is one spread until an *episode break* sta
 | `download.js` | `.env` | `data/*.csv` (exports Group: Live from OptionStrat, converts xlsx → CSV) |
 | `portfolio.js <csv>` | CSV file | `reports/*-portfolio.html`, `*-portfolio.json` (the positions with their exit `plan`, `fromHere` and `recovery`, plus the underlying prices as `spots`) and `*-prices.json` |
 | `daily-pnl.js` | Two newest snapshots | `reports/*-daily-pnl.html` and `<base>-pnl.json`, P&L attribution between runs |
-| `brief.js` | Newest snapshot and its P&L | `reports/<base>-brief.json` and `latest.json`, the [brief for agents](#the-brief-for-agents) |
+| `brief.js` | Newest snapshot and its P&L | `reports/<base>-brief.json` and `latest.json`, the [brief for agents](#the-brief-for-agents), and `shared/spread-alerts.json` for equity-watch when `shared/` exists and the snapshot is the newest |
+| `spread-alerts.js` | An annotated snapshot | The stop alerts for equity-watch: one per open put or call spread, at the stock price of its exit plan's stop. The complete set every time, so a spread missing from it is cancelled there; `complete: false` and `unpriced` keep a bad run from reading as everything closing |
 | `generate-index.js` | File list | `reports/index.html`, `archive.html`, `snapshots.json` |
 | `sim.js` | A snapshot | The exit plan and the "from here" simulation for each spread, added to the snapshot by `portfolio.js`. Node only, a port of spread-scanner's `src/outcome.ts` |
 | `book.js` | — | Exit rules, strike distance, history and the calculations the page draws, shared by `report.js` and `brief.js` |

@@ -36,16 +36,21 @@ async function loadPage(snapshot, { base = 'fixture', files = {}, url = 'http://
 }
 
 // Runs the real brief.js on a snapshot, in a scratch copy so it reads and writes nothing of the project's,
-// and returns the latest.json it wrote.
-function runBrief(snapshot, base = 'live-active-by-symbol-2026-03-24_14-12') {
+// and returns the latest.json it wrote. With shared: true the copy has a shared/ directory, and the
+// spread-alerts.json written there comes back as alerts. older are earlier snapshots, as { base: snapshot }.
+function runBrief(snapshot, base = 'live-active-by-symbol-2026-03-24_14-12', { shared = false, older = {}, arg } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spread-book-test-'));
   try {
-    for (const f of ['brief.js', 'book.js']) fs.copyFileSync(path.join(__dirname, '..', f), path.join(dir, f));
+    for (const f of ['brief.js', 'book.js', 'spread-alerts.js', 'betas.js']) fs.copyFileSync(path.join(__dirname, '..', f), path.join(dir, f));
     fs.mkdirSync(path.join(dir, 'reports'));
-    fs.writeFileSync(path.join(dir, 'reports', base + '-portfolio.json'), JSON.stringify(snapshot));
-    const r = spawnSync(process.execPath, ['brief.js'], { cwd: dir, encoding: 'utf8' });
+    if (shared) fs.mkdirSync(path.join(dir, 'shared'));
+    for (const [b, s] of Object.entries({ ...older, [base]: snapshot })) fs.writeFileSync(path.join(dir, 'reports', b + '-portfolio.json'), JSON.stringify(s));
+    const r = spawnSync(process.execPath, ['brief.js', ...(arg ? [path.join('reports', arg + '-portfolio.json')] : [])], { cwd: dir, encoding: 'utf8' });
     if (r.status !== 0) throw new Error('brief.js failed: ' + r.stderr);
-    return JSON.parse(fs.readFileSync(path.join(dir, 'reports', 'latest.json'), 'utf8'));
+    const brief = JSON.parse(fs.readFileSync(path.join(dir, 'reports', 'latest.json'), 'utf8'));
+    const alertsFile = path.join(dir, 'shared', 'spread-alerts.json');
+    if (shared) brief.alerts = fs.existsSync(alertsFile) ? JSON.parse(fs.readFileSync(alertsFile, 'utf8')) : null;
+    return brief;
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 }
 

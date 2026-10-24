@@ -75,7 +75,7 @@ function readBetas(file) {
   return { asOf: doc.generatedAt, betas };
 }
 
-module.exports = { BETAS_SCHEMA, toSchwab, fromSchwab, underlyingsFromCsv, writeUnderlyings, readBetas };
+module.exports = { BETAS_SCHEMA, toSchwab, fromSchwab, underlyingsFromCsv, writeFileAtomic, writeUnderlyings, readBetas };
 
 if (require.main === module) {
   const [cmd, csv, out] = process.argv.slice(2);
