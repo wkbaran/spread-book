@@ -279,3 +279,42 @@ test('a parsed trade enriches like any other spread', () => {
   assert.equal(t.shortStrike, 185);
   assert.ok(t.z > 0);
 });
+
+// ---- the exit plan and the "from here" panel ---------------------------------------------------------------
+
+const level = (debit, spot, shortDelta = 0.3) => ({ debit, spot, shortDelta, pnl: 0 });
+const withPlan = (over = {}) => ({
+  plan: { debitNow: 1.2, spot: 100, shortDeltaNow: 0.3, target: level(0.4, 104), watch: level(1.5, 98), stop: level(1.9, 96) },
+  fromHere: { pProfit: 30, pTarget: 20, pHardStop: 25, avgResultPct: -15 },
+  recovery: [15, 25, 35, 50].map((lossPct, i) => ({ lossPct, spot: 98 - i, pProfit: 40 - i * 10, pTarget: 10, pHardStop: 10 + i * 20, avgResultPct: -lossPct })),
+  lossOfMax: 20, returnPct: -40, exit: '', dte: 30, toward: -0.8, ...over,
+});
+
+test('planRows: target, now, watch and stop ordered by the spread price, now where it falls', () => {
+  assert.deepEqual(SB.planRows(withPlan()).map((r) => r.key), ['target', 'now', 'watch', 'stop']);
+  const past = withPlan({ plan: { ...withPlan().plan, debitNow: 2.1 } });
+  assert.deepEqual(SB.planRows(past).map((r) => r.key), ['target', 'watch', 'stop', 'now']);
+  assert.deepEqual(SB.planRows(withPlan()).map((r) => r.pct), [SB.RULES.target, null, -SB.RULES.watch, -SB.RULES.stop]);
+  assert.deepEqual(SB.planRows({ plan: null }), []);
+});
+
+test('recoveryRows: the ladder with the current loss slotted in and marked now', () => {
+  const rows = SB.recoveryRows(withPlan());
+  assert.deepEqual(rows.map((r) => [r.lossPct, r.now]), [[15, false], [20, true], [25, false], [35, false], [50, false]]);
+  assert.equal(rows[1].pProfit, 30, 'now comes from fromHere');
+  assert.deepEqual(SB.recoveryRows(withPlan({ lossOfMax: 0 })).map((r) => r.lossPct), [0, 15, 25, 35, 50]);
+  assert.deepEqual(SB.recoveryRows(withPlan({ lossOfMax: 60 })).map((r) => r.lossPct), [15, 25, 35, 50, 60]);
+  const unreachable = withPlan({ recovery: withPlan().recovery.map((r) => (r.lossPct === 50 ? { lossPct: 50, spot: null } : r)) });
+  assert.deepEqual(SB.recoveryRows(unreachable).map((r) => r.lossPct), [15, 20, 25, 35], 'a level the spread can\'t reach is left out');
+  assert.deepEqual(SB.recoveryRows({ recovery: null, fromHere: null }), []);
+});
+
+test('showsFromHere: a losing spread or one in a decision list, never one without the numbers', () => {
+  assert.equal(SB.showsFromHere(withPlan()), true);
+  const quiet = { lossOfMax: 0, returnPct: 10, exit: '', dte: 30, toward: 0.2 };
+  assert.equal(SB.showsFromHere(withPlan(quiet)), false);
+  assert.equal(SB.showsFromHere(withPlan({ ...quiet, dte: SB.RULES.rollDays })), true, 'roll window');
+  assert.equal(SB.showsFromHere(withPlan({ ...quiet, toward: SB.RULES.near })), true, 'getting close');
+  assert.equal(SB.showsFromHere(withPlan({ ...quiet, exit: 'close', returnPct: 60 })), true, 'ready to close');
+  assert.equal(SB.showsFromHere(withPlan({ fromHere: null })), false);
+});

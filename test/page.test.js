@@ -230,3 +230,119 @@ test('opened from disk, with no snapshots.json, the page still draws the embedde
   assert.equal(p.$$('#snapshot option').length, 1);
   assert.deepEqual(p.errors, []);
 });
+
+// ---- the exit plan and the "from here" panel (stored in the snapshot by sim.js) ----
+const sim = require('../sim');
+const planned = () => sim.annotate(snapshot());
+const showSpread = (p, sym, strikes = '') => p.click(p.$$('#sc tbody tr').find((r) => r.children[0].textContent === sym && r.children[1].textContent.startsWith(strikes)));
+
+test('the exit-plan panel shows the plan three ways, and what holding does, for a spread at the stop', async (t) => {
+  const snap = planned(), p = await open(t, snap);
+  assert.deepEqual(p.errors, []);
+  showSpread(p, 'AMD');
+  const amd = snap.positions.find((x) => x.underlying === 'AMD');
+  const rows = p.$$('#drawer table.plan tbody tr');
+  assert.deepEqual(rows.map((r) => r.className), SB.planRows(SB.enrich({ ...amd }, snap)).map((r) => r.key));
+  const stop = p.$('#drawer table.plan tr.stop');
+  assert.deepEqual([...stop.children].slice(1).map((td) => td.textContent),
+    [`$${amd.plan.stop.debit.toFixed(2)}`, `≈ $${amd.plan.stop.spot.toFixed(2)}`, amd.plan.stop.shortDelta.toFixed(2)]);
+  assert.doesNotMatch(p.text('#detail'), /If you hold from here/, 'it is in the panel, not the detail');
+  assert.match(p.text('#plan-open'), new RegExp(`Held from here, ${Math.round(amd.fromHere.pProfit)}% of simulated runs end with a gain`));
+  assert.match(p.text('#drawer'), /If you hold from here/);
+  assert.match(p.text('#drawer'), new RegExp(`Of ${snap.sim.paths} simulated runs`));
+  assert.equal(p.$$('#drawer table.ladder tbody tr').length, 5, 'four loss levels and now');
+  assert.equal(p.$$('#drawer table.ladder tr.now').length, 1);
+  assert.doesNotMatch(p.text('#drawer'), /will recover|likely to recover/);
+});
+
+test('the At the stop list says where the exit is and how often runs from here end with a gain', async (t) => {
+  const snap = planned(), p = await open(t, snap);
+  const amd = snap.positions.find((x) => x.underlying === 'AMD');
+  const stopped = p.$$('#decide section').find((s) => s.querySelector('h2').textContent === 'At the stop');
+  assert.equal(stopped.querySelector('.d-plan').textContent,
+    `Exit at $${amd.plan.stop.debit.toFixed(2)}, stock ≈ $${amd.plan.stop.spot.toFixed(2)}. ${Math.round(amd.fromHere.pProfit)}% of runs from here end with a gain`);
+});
+
+test('a quiet winner gets the exit plan but no from-here panel', async (t) => {
+  const p = await open(t, planned());
+  showSpread(p, 'NVDA', '150/155'); // +5%, 24 days, in no list
+  assert.match(p.text('#detail h3'), /NVDA 150\/155/);
+  assert.ok(p.$('#plan-open'));
+  assert.ok(p.$('#drawer table.plan'));
+  assert.doesNotMatch(p.text('#drawer'), /If you hold from here/);
+  assert.doesNotMatch(p.text('#plan-open'), /Held from here/);
+});
+
+test('a stock past the short strike is a warning, not an exit', async (t) => {
+  const p = await open(t, planned());
+  showSpread(p, 'MRNA'); // spot 30 below a 45 short put
+  assert.match(p.text('#drawer .warn'), /past the short strike.*warning, not an exit/);
+});
+
+test('snapshots from before the exit plan, and trial trades, draw without one', async (t) => {
+  const p = await open(t);
+  assert.deepEqual(p.errors, []);
+  assert.equal(p.$('#plan-open'), null);
+  assert.equal(p.$('#drawer table.plan'), null);
+  assert.equal(p.$('#decide .d-plan'), null);
+  const q = await open(t, planned());
+  q.$('#whatif-text').value = ROW('GOOGL Apr 17th 270/275 Bull Put Spread', '4/17/26 14:00', 1);
+  q.click(q.$('#whatif-add'));
+  assert.match(q.text('#detail h3'), /GOOGL/);
+  assert.equal(q.$('#plan-open'), null);
+  assert.equal(q.$('#drawer table.plan'), null);
+  assert.deepEqual(q.errors, []);
+});
+
+test('latest.json carries the plan, fromHere and recovery, and describes them', () => {
+  const snap = planned(), b = runBrief(snap);
+  const amd = b.positions.find((x) => x.underlying === 'AMD'), stored = snap.positions.find((x) => x.underlying === 'AMD');
+  assert.deepEqual([amd.plan, amd.fromHere, amd.recovery], [stored.plan, stored.fromHere, stored.recovery]);
+  assert.deepEqual(b.decisions.atStop[0].plan, stored.plan);
+  assert.equal(b.positions.find((x) => x.underlying === 'SPX').plan, null);
+  for (const k of ['plan', 'fromHere', 'recovery', 'simulation']) assert.ok(b.glossary[k], k);
+  assert.deepEqual(b.simulation, snap.sim);
+  assert.equal(b.rules.watchAtPctOfMaxLoss, SB.RULES.watch);
+  assert.equal(b.rules.hardStopAtPctOfMaxLoss, SB.RULES.hardStop);
+  assert.equal(runBrief(snapshot()).simulation, null, 'an old snapshot has none');
+});
+
+test('the exit plan slides out from the detail, follows the selected spread, and closes', async (t) => {
+  const p = await open(t, planned());
+  const drawer = p.$('#drawer');
+  showSpread(p, 'AMD');
+  assert.equal(drawer.classList.contains('open'), false);
+  assert.ok(drawer.hasAttribute('inert'), 'closed, it is out of the tab order');
+  assert.match(p.text('#plan-open'), /^Exit plan Stop at \$\d+\.\d\d, stock ≈ \$/);
+  p.click(p.$('#plan-open'));
+  assert.ok(drawer.classList.contains('open'));
+  assert.equal(drawer.hasAttribute('inert'), false);
+  assert.equal(p.$('#plan-open').getAttribute('aria-expanded'), 'true');
+  assert.equal(p.document.activeElement, p.$('#drawer-close'));
+  assert.match(p.text('#drawer-title'), /AMD 230\/235/);
+  showSpread(p, 'MSFT');
+  assert.ok(drawer.classList.contains('open'), 'stays open for another spread');
+  assert.match(p.text('#drawer-title'), /MSFT 400\/405/);
+  p.key('Escape');
+  assert.equal(drawer.classList.contains('open'), false);
+  p.click(p.$('#plan-open'));
+  p.click(p.$('#drawer-close'));
+  assert.equal(drawer.classList.contains('open'), false);
+  // A spread with no plan closes it.
+  p.click(p.$('#plan-open'));
+  showSpread(p, 'SPX');
+  assert.equal(drawer.classList.contains('open'), false);
+  assert.deepEqual(p.errors, []);
+});
+
+test('the greeks and pay for risk are accordions that start closed and stay as left', async (t) => {
+  const p = await open(t, planned());
+  const acc = (k) => p.$(`#detail details[data-acc="${k}"]`);
+  assert.deepEqual([acc('greeks').open, acc('risk').open], [false, false]);
+  assert.match(p.text('#detail details[data-acc="greeks"] summary'), /^Greeks/);
+  acc('greeks').open = true;
+  acc('greeks').dispatchEvent(new p.window.Event('toggle'));
+  showSpread(p, 'MSFT');
+  assert.deepEqual([acc('greeks').open, acc('risk').open], [true, false]);
+  assert.match(p.text('#detail details[data-acc="greeks"]'), /Theta per day/);
+});

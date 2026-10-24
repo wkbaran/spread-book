@@ -5,6 +5,7 @@ const path     = require('path');
 const https    = require('https');
 const { buildPage } = require('./page');
 const { readBetas } = require('./betas');
+const { annotate } = require('./sim');
 
 const csvFile = process.argv[2];
 if (!csvFile) { console.error('Usage: node portfolio.js <csv-file>'); process.exit(1); }
@@ -216,6 +217,14 @@ async function fetchCurrentPrices(underlyings) {
       tvRatio:    s.tvRatio,
     })),
   };
+
+  // The exit plan and the "from here" odds for each spread (sim.js). Stored, so the page and brief.js only read
+  // them. A failure here costs those numbers, not the report.
+  try {
+    const t0 = Date.now();
+    annotate(snapshot);
+    console.log(`Exit plans: ${snapshot.positions.filter(p => p.plan).length}/${snapshot.positions.length} spreads (${Date.now() - t0} ms)`);
+  } catch (e) { console.warn('WARN: exit plans failed:', e.message); }
 
   const jsonFile = path.join(reportsDir, basename + '-portfolio.json');
   fs.writeFileSync(jsonFile, JSON.stringify(snapshot, null, 2));

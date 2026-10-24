@@ -103,6 +103,9 @@ const position = p => ({
   iv:              round(p.iv, 1),
   thetaPerGamma:   round(p.tg),
   thetaPerVega:    round(p.tv),
+  plan:            p.plan ?? null,
+  fromHere:        p.fromHere ?? null,
+  recovery:        p.recovery ?? null,
 });
 
 // Book greeks grouped by a key, largest theta first, with each group's share of the book's theta.
@@ -145,6 +148,8 @@ const brief = {
   rules: {
     closeAtPctOfMaxProfit: RULES.target,
     stopAtPctOfMaxLoss:    RULES.stop,
+    watchAtPctOfMaxLoss:   RULES.watch,
+    hardStopAtPctOfMaxLoss: RULES.hardStop,
     rollWindowDays:        RULES.rollDays,
     gettingClosePct:       RULES.near * 100,
     warnWithinSigmaOfShortStrike: RULES.strikeSigma,
@@ -179,11 +184,16 @@ const brief = {
     closed:        'Episodes that ended before this snapshot, closed within closedLookbackDays, newest first. A spread held as two saved trades counts once. openedAt, daysHeld and entry come from the first snapshot containing it (openedAt and daysHeld are null when entry.known is false). closedAt is the first snapshot without it. lastReturnPct is from the last snapshot with it, so approximate is always true: the real close, and the return at it, came somewhere between.',
     outcome:       'Judged on the last snapshot with the spread: target (returnPct at or past closeAtPctOfMaxProfit), else stop (loss at or past stopAtPctOfMaxLoss), else expired (dte 0 or less), else other. A spread that expired worthless counts as target when its last return was already 50 or more.',
     book:          'The whole book by kind: counts and maxLoss for put (Bull Put), call (Bear Call) and other spreads, netDelta, and betaWeightedDelta over the positions that have a beta (null when none do; betaCoverage says how many). Same figures as totals, regrouped.',
-    spotsAsOf:     'When the Yahoo prices behind sigmaToShortStrike and underlyingSpot were fetched. They are fetched 25 to 45 minutes after the positions in generatedAt, so the distance is that stale. Prices of a re-published old snapshot are the time of the re-run. null for snapshots from before this was recorded, or when Yahoo returned nothing.',
+    spotsAsOf:     'When the Yahoo prices behind sigmaToShortStrike, underlyingSpot, plan, fromHere and recovery were fetched. They are fetched 25 to 45 minutes after the positions in generatedAt, so the distance is that stale. Prices of a re-published old snapshot are the time of the re-run. null for snapshots from before this was recorded, or when Yahoo returned nothing.',
+    plan:          'The exit stated before it is needed, as of this snapshot, from sim.js. Prices are per share of the spread, as a broker quotes it. debitNow is the mark now (the credit less the P&L), spot the Yahoo price it used, shortDeltaNow the short leg\'s delta at that price. stop, watch and target each give the spread price (debit) at stopAtPctOfMaxLoss and watchAtPctOfMaxLoss of max loss and at closeAtPctOfMaxProfit, the P&L there in dollars for the whole position (pnl), the stock price that would put the spread there today (spot) and the short leg\'s delta at that price (shortDelta). The spread price is the rule; spot and shortDelta are the same level said other ways, and they drift as days pass, because time decay moves the spread at a fixed stock price. spot is null when no stock price gets the spread there today (a profit target only time can reach). The watch level is a heads-up, not an exit. pastShortStrike (the stock is beyond the short strike) is a warning, not an exit. contracts is derived, (maxProfit + maxLoss) ÷ (width × 100). modelGap is the mark less the model\'s price at today\'s stock price, per share: the model is moved by it so it matches the mark today, and a large one (tens of cents) means the model fits that spread badly. Black-Scholes with the position\'s one IV for both legs, so treat the stock prices as approximate. null for a spread that is not a plain put or call spread, or has no price or IV.',
+    fromHere:      'Of simulation.paths simulated stock paths from today\'s price, what holding does: a resting order at closeAtPctOfMaxProfit, a hard stop when the loss reaches hardStopAtPctOfMaxLoss at a close, otherwise out on until (rollWindowDays before expiration, or expiration for a spread already inside that window). pProfit is the share of runs that end with a gain, pTarget, pHardStop and pTime how they end (adding to 100). avgResultPct is the average result as a percentage of max loss, signed (a gain is positive), avgResult the same in dollars; exitNowPct and exitNow are what closing at the mark now gets, less simulation.exitCost per share. pLossPastHalf is the share of runs that lose half of max loss or more, worst5Pct the average of the worst 5% of runs. A model calibrated to one trading record, not a forecast: the stock is drawn at the position\'s IV, so a fairly priced spread has no edge and holding is roughly a fair bet against closing now, with a worse tail. null when the model cannot price the spread (see plan).',
+    recovery:      'The same simulation as fromHere, started from the stock price at which the spread would show each loss level today (lossPct, as a percentage of max loss; spot is that price, null when the spread cannot get there today, and then the other fields are missing). It shows how the odds fall as a loss deepens, which is what waiting past the stop costs. null when fromHere is.',
+    simulation:    'What the plan, fromHere and recovery numbers assumed: paths, steps per trading day (intraday), a flat rate, ivDecay (the share the IV falls by over decayDays, at that daily rate from the snapshot and capped there; calibrated to one trading record, not derived), exitCost per share for fills that cross the market (the export has no bid or ask), the hard stop, and stopChecked: the stop is judged at each simulated close. null for snapshots written before these numbers were added.',
     thetaPerGamma: 'Theta earned per unit of gamma. Low values are most exposed to a sharp move.',
     thetaPerVega:  'Theta earned per unit of vega. Low values are most exposed to a volatility spike.',
   },
   spotsAsOf: snap.spotsAsOf ?? null,
+  simulation: snap.sim ?? null,
   summary: {
     positions:    list.length,
     underlyings:  new Set(list.map(p => p.underlying)).size,

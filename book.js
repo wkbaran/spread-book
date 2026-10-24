@@ -10,6 +10,8 @@
   const RULES = {
     target: 50, // close winners at 50% of max profit
     stop: 25, // close losers when the loss reaches 25% of max loss
+    watch: 15, // a heads-up in the exit plan before the stop: not an exit
+    hardStop: 50, // where the "from here" runs give up on a spread held past the stop (sim.js)
     rollDays: 21, // close or roll inside this many days
     near: 0.6, // "getting close": this far toward either exit
     strikeSigma: 0.5, // flag a spread when its short strike is within this many expected moves of the stock
@@ -122,6 +124,36 @@
       soon: list.filter((p) => !p.exit && p.dte <= RULES.rollDays).sort((a, b) => a.dte - b.dte),
       near: list.filter((p) => !p.exit && p.dte > RULES.rollDays && Math.abs(p.toward) >= RULES.near).sort((a, b) => Math.abs(b.toward) - Math.abs(a.toward)),
     };
+  }
+
+  // Whether the page shows a spread's "from here" panel: it is losing, or it is in one of the decision lists.
+  // sim.js works the numbers out for every spread it can price; this only keeps the panel off quiet winners.
+  const showsFromHere = (p) => !!p.fromHere && (p.lossOfMax > 0 || !!p.exit || p.dte <= RULES.rollDays || Math.abs(p.toward) >= RULES.near);
+
+  // The exit plan (sim.js) as rows from best to worst by the spread's price: the target, the watch line, the stop
+  // and where it is now, each { key, debit, spot, shortDelta }. pct is the level's rule, signed like the P&L.
+  // [] without a plan.
+  function planRows(p) {
+    const plan = p.plan;
+    if (!plan) return [];
+    return [
+      { key: "target", pct: RULES.target, ...plan.target },
+      { key: "now", pct: null, debit: plan.debitNow, spot: plan.spot, shortDelta: plan.shortDeltaNow },
+      { key: "watch", pct: -RULES.watch, ...plan.watch },
+      { key: "stop", pct: -RULES.stop, ...plan.stop },
+    ].sort((a, b) => a.debit - b.debit || (a.key === "now" ? -1 : b.key === "now" ? 1 : 0));
+  }
+
+  // The recovery ladder as the page lists it: each SIM.ladder loss level the model could reach, shallowest first,
+  // with the spread where it is now (sim.js fromHere) put in its place and marked now. [] without the numbers.
+  function recoveryRows(p) {
+    if (!p.recovery || !p.fromHere) return [];
+    const rungs = p.recovery.filter((r) => r.spot !== null).map((r) => ({ ...r, now: false }));
+    const f = p.fromHere;
+    const here = { lossPct: p.lossOfMax, spot: p.plan ? p.plan.spot : null, pProfit: f.pProfit, pTarget: f.pTarget, pHardStop: f.pHardStop, avgResultPct: f.avgResultPct, now: true };
+    const at = rungs.findIndex((r) => r.lossPct > here.lossPct);
+    rungs.splice(at < 0 ? rungs.length : at, 0, here);
+    return rungs;
   }
 
   // ---- what the report page draws ----------------------------------------------------------------
@@ -310,7 +342,7 @@
     return { open, closed };
   }
 
-  const api = { RULES, isoDate, fromDenver, takenAt, enrich, tagCondors, decide, spreadKey, history,
+  const api = { RULES, isoDate, fromDenver, takenAt, enrich, tagCondors, decide, showsFromHere, planRows, recoveryRows, spreadKey, history,
     sumOf, median, counts, addUp, heatmap, rank, plotModel, sortSpreads, bookTotals, parseTrade };
   if (typeof module === "object" && module.exports) module.exports = api;
   else globalThis.SpreadBook = api;

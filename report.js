@@ -28,6 +28,19 @@
   const BW_HELP = "Beta-weighted delta: each spread's delta × its beta × (stock price ÷ SPY price), added up. It is the number of SPY shares the book behaves like. Beta is Schwab's, passed on by equity-watch; only spreads that have one are counted.";
   const sigma = (p) => (p.z === null ? "—" : fmt(p.z, 1) + "σ");
   const exitLong = (p) => (p.returnPct >= 0 ? `${pct(p.returnPct)} of max profit` : `${p.lossOfMax.toFixed(1)}% of max loss`);
+  const price = (v) => "$" + v.toFixed(2);
+  const share = (v) => (v < 1 && v > 0 ? "<1" : Math.round(v)) + "%";
+  const ofMax = (v) => signed(v, 0) + "%";
+  // People read times in Mountain time, whatever the browser's zone.
+  const mountain = (iso) => new Date(iso).toLocaleTimeString("en-US", { timeZone: "America/Denver", hour: "numeric", minute: "2-digit" }) + " MT";
+  // One line under a decision: where the spread's exit is, from the plan sim.js stored with the snapshot.
+  function planLine(p) {
+    const pl = p.plan;
+    if (!pl) return "";
+    const at = (lvl) => `${price(lvl.debit)}${lvl.spot === null ? "" : `, stock ≈ ${price(lvl.spot)}`}`;
+    if (p.exit === "stop") return `Exit at ${at(pl.stop)}${p.fromHere ? `. ${share(p.fromHere.pProfit)} of runs from here end with a gain` : ""}`;
+    return p.returnPct >= 0 ? `Target at ${at(pl.target)}` : `Stop at ${at(pl.stop)}`;
+  }
 
   // ---- state ---------------------------------------------------------------
   const embedded = JSON.parse($("book-data").textContent);
@@ -39,6 +52,8 @@
   let greek = "theta";
   let selected = null;
   let sort = { key: "dte", dir: 1 };
+  let planOpen = false; // the exit-plan drawer
+  const acc = { greeks: false, risk: false }; // which detail accordions are open, kept across redraws
 
   function enrich(p, id) {
     p.id = id;
@@ -96,7 +111,7 @@
   function renderDecide() {
     const list = all();
     const what = (p) => `${esc(p.strikes)} ${p.kind}, ${p.dte} days`;
-    const item = (p, num, hot, title) => `<li><button type="button" data-id="${p.id}"><span class="sym">${esc(p.underlying)}</span><span class="d-what">${what(p)}</span><span class="d-num ${hot ? "hot" : ""}" title="${title}">${num}</span></button></li>`;
+    const item = (p, num, hot, title, line = "") => `<li><button type="button" data-id="${p.id}"><span class="sym">${esc(p.underlying)}</span><span class="d-what">${what(p)}</span><span class="d-num ${hot ? "hot" : ""}" title="${title}">${num}</span>${line ? `<span class="d-plan">${line}</span>` : ""}</button></li>`;
     const block = (title, help, rows, empty) => {
       const shown = rows.slice(0, 6), more = rows.length - shown.length;
       return `<section><h2>${title}</h2><p class="d-help">${help}</p>${rows.length ? `<ul>${shown.join("")}</ul>${more ? `<p class="empty">and ${more} more in the scorecard</p>` : ""}` : `<p class="empty">${empty}</p>`}</section>`;
@@ -107,10 +122,10 @@
     $("decide").innerHTML =
       block("Ready to close", `At or past ${TARGET}% of max profit.`, ready.map((p) => item(p, exitPct(p), true, exitLong(p))),
         best && best.returnPct > 0 ? `None yet. Closest is ${esc(best.underlying)} at ${pct(best.returnPct)}.` : "None yet.") +
-      block("At the stop", `Loss has reached ${STOP}% of max loss.`, stopped.map((p) => item(p, exitPct(p), true, exitLong(p))),
+      block("At the stop", `Loss has reached ${STOP}% of max loss.`, stopped.map((p) => item(p, exitPct(p), true, exitLong(p), planLine(p))),
         worst && worst.lossOfMax > 0 ? `None. Worst is ${esc(worst.underlying)} at ${worst.lossOfMax.toFixed(1)}% of max loss.` : "Nothing is losing.") +
       block(`${ROLL_DAYS} days or less`, "Close or roll before gamma speeds up.", soon.map((p) => item(p, exitPct(p), false, exitLong(p))), `Nothing expires within ${ROLL_DAYS} days.`) +
-      block("Getting close", `Past ${SB.RULES.near * 100}% of the way to either exit.`, near.map((p) => item(p, exitPct(p), false, exitLong(p))), "Everything else is in the middle.");
+      block("Getting close", `Past ${SB.RULES.near * 100}% of the way to either exit.`, near.map((p) => item(p, exitPct(p), false, exitLong(p), planLine(p))), "Everything else is in the middle.");
   }
   $("decide").addEventListener("click", (e) => { const b = e.target.closest("[data-id]"); if (b) select(b.dataset.id, true); });
 
@@ -159,7 +174,7 @@
   }
   function renderDetail() {
     const p = all().find((x) => x.id === selected);
-    if (!p) { $("detail").innerHTML = `<p class="muted">Select a cell, dot or row to see that spread.</p>`; return; }
+    if (!p) { $("detail").innerHTML = `<p class="muted">Select a cell, dot or row to see that spread.</p>`; renderDrawer(null); return; }
     const hot = !!p.exit;
     const status = p.exit === "close" ? "Past the close target" : p.exit === "stop" ? "At the stop" : p.returnPct >= 0 ? `of max profit. Close at ${TARGET}%` : `of max loss. Stop at ${STOP}%`;
     const sameCell = all().filter((o) => o !== p && o.underlying === p.underlying && o.kind === p.kind && o.expiration === p.expiration);
@@ -184,7 +199,8 @@
         <dt>Short strike</dt><dd>${p.shortStrike === null ? "—" : "$" + p.shortStrike}</dd>
         <dt title="${SIGMA_HELP}">Expected moves to it</dt><dd class="${p.nearStrike ? "watch" : ""}">${p.z === null ? "no price" : sigma(p) + (p.nearStrike ? `<span class="rank">inside ${SB.RULES.strikeSigma}σ</span>` : "")}</dd>
       </dl>
-      <h4>Greeks</h4>
+      ${planButton(p)}
+      <details class="acc" data-acc="greeks" ${acc.greeks ? "open" : ""}><summary>Greeks</summary>
       <dl class="kv">
         <dt>Theta per day</dt><dd>${fmt(p.theta)}</dd>
         <dt>Delta</dt><dd>${fmt(p.delta, 1)}</dd>
@@ -192,14 +208,88 @@
         <dt title="${BW_HELP}">Beta-weighted delta</dt><dd>${p.bwDelta === null ? "—" : fmt(p.bwDelta, 1) + `<span class="rank">SPY shares</span>`}</dd>
         <dt>Gamma</dt><dd>${fmt(p.gamma)}</dd>
         <dt>Vega</dt><dd>${fmt(p.vega)}</dd>
-      </dl>
-      <h4>Pay for risk</h4>
+      </dl></details>
+      <details class="acc" data-acc="risk" ${acc.risk ? "open" : ""}><summary>Pay for risk</summary>
       <dl class="kv">
         <dt>Theta per unit gamma</dt><dd>${p.tg === null ? "no gamma" : p.tg.toFixed(2) + rankOf(p, "tg")}</dd>
         <dt>Theta per unit vega</dt><dd>${p.tv === null ? "no vega" : p.tv.toFixed(2) + rankOf(p, "tv")}</dd>
-      </dl>`;
+      </dl></details>`;
+    renderDrawer(p);
   }
-  $("detail").addEventListener("click", (e) => { const b = e.target.closest("[data-id]"); if (b) select(b.dataset.id); });
+  $("detail").addEventListener("click", (e) => {
+    if (e.target.closest("#plan-open")) { openPlan(true); return; }
+    const b = e.target.closest("[data-id]"); if (b) select(b.dataset.id);
+  });
+  // toggle doesn't bubble, so listen on the way down.
+  $("detail").addEventListener("toggle", (e) => { const d = e.target.closest && e.target.closest("details[data-acc]"); if (d) acc[d.dataset.acc] = d.open; }, true);
+
+  // The exit stated three ways: the spread's price (the rule), the stock price that puts it there today, and the
+  // short leg's delta at that price. Worked out by sim.js when the snapshot was written; trial trades have none.
+  const PLAN_LABEL = { target: `Target, +${TARGET}%`, now: "Now", watch: `Watch, −${SB.RULES.watch}%`, stop: `Stop, −${STOP}%` };
+  // In the detail panel: the stop in one line, and a button that slides the full plan, and what holding from here
+  // does, out from the side.
+  function planButton(p) {
+    if (!p.plan) return "";
+    const s = p.plan.stop;
+    return `<button type="button" class="plan-open" id="plan-open" aria-controls="drawer" aria-expanded="${planOpen}">
+      <span class="po-title">Exit plan</span>
+      <span class="po-line">Stop at ${price(s.debit)}${s.spot === null ? "" : `, stock ≈ ${price(s.spot)}`}${s.shortDelta === null ? "" : `, short Δ ${s.shortDelta.toFixed(2)}`}</span>
+      ${SB.showsFromHere(p) ? `<span class="po-line">Held from here, ${share(p.fromHere.pProfit)} of simulated runs end with a gain</span>` : ""}
+      ${p.plan.pastShortStrike ? `<span class="po-warn">Stock past the short strike</span>` : ""}
+      <span class="po-go" aria-hidden="true">›</span></button>`;
+  }
+  // The drawer follows the selected spread while it is open, and closes for one without a plan.
+  function renderDrawer(p) {
+    if (!p || !p.plan) { $("drawer-body").innerHTML = ""; if (planOpen) openPlan(false); return; }
+    $("drawer-title").textContent = `Exit plan: ${p.underlying} ${p.strikes}`;
+    $("drawer-body").innerHTML = planHTML(p) + fromHereHTML(p);
+  }
+  function openPlan(open) {
+    planOpen = open;
+    const d = $("drawer");
+    d.classList.toggle("open", open);
+    d.toggleAttribute("inert", !open);
+    d.setAttribute("aria-hidden", String(!open));
+    const btn = $("plan-open");
+    if (btn) btn.setAttribute("aria-expanded", String(open));
+    if (open) $("drawer-close").focus();
+    else if (btn && d.contains(document.activeElement)) btn.focus();
+  }
+  $("drawer-close").addEventListener("click", () => openPlan(false));
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && planOpen) openPlan(false); });
+
+  function planHTML(p) {
+    const rows = SB.planRows(p);
+    if (!rows.length) return "";
+    const asOf = snap.spotsAsOf ? `Stock prices from Yahoo at ${mountain(snap.spotsAsOf)}.` : "";
+    return `<table class="plan"><thead><tr><th scope="col"></th><th scope="col">Spread</th><th scope="col">Stock</th><th scope="col" title="The short leg's delta at that stock price">Short Δ</th></tr></thead><tbody>
+      ${rows.map((r) => `<tr class="${r.key}"><th scope="row">${PLAN_LABEL[r.key]}</th><td>${price(r.debit)}</td><td>${r.spot === null ? `<span title="No stock price gets the spread there today">—</span>` : (r.key === "now" ? "" : "≈ ") + price(r.spot)}</td><td>${r.shortDelta === null ? "—" : r.shortDelta.toFixed(2)}</td></tr>`).join("")}
+      </tbody></table>
+      ${p.plan.pastShortStrike ? `<p class="warn">The stock is past the short strike. That is a warning, not an exit: the stop is the loss.</p>` : ""}
+      <p class="plan-note">The spread's price is the rule. The stock price is where the spread would be at that price today: check it against a live quote during the day, and expect it to shift as days pass. Watch is a heads-up, not an exit. ${asOf}</p>`;
+  }
+
+  // What holding does from here, and from deeper losses, as simulated by sim.js. Shown for spreads that are
+  // losing or in a decision list (SB.showsFromHere). Says "of simulated runs", never that a spread will recover.
+  function fromHereHTML(p) {
+    if (!SB.showsFromHere(p)) return "";
+    const f = p.fromHere, hard = SB.RULES.hardStop, runs = snap.sim ? snap.sim.paths : "the";
+    const ladder = SB.recoveryRows(p);
+    return `<h4>If you hold from here</h4>
+      <p class="plan-note">Of ${runs} simulated runs from today's price, held to the ${TARGET}% profit target, a ${hard}% loss at a close, or ${expLabel(f.until)}:</p>
+      <dl class="kv">
+        <dt>End with a gain</dt><dd>${share(f.pProfit)}</dd>
+        <dt>Reach the profit target</dt><dd>${share(f.pTarget)}</dd>
+        <dt>Hit the ${hard}% hard stop</dt><dd>${share(f.pHardStop)}</dd>
+        <dt>Average result, held</dt><dd>${ofMax(f.avgResultPct)}<span class="rank">${money(f.avgResult)}</span></dd>
+        <dt>Close now</dt><dd>${ofMax(f.exitNowPct)}<span class="rank">${money(f.exitNow)}</span></dd>
+        <dt>Worst 5% of runs, held</dt><dd>${ofMax(f.worst5Pct)}</dd>
+      </dl>
+      ${ladder.length > 1 ? `<table class="ladder"><caption>If the loss were deeper today</caption><thead><tr><th scope="col">Loss</th><th scope="col">Stock</th><th scope="col">End with a gain</th><th scope="col">Hard stop</th><th scope="col">Average</th></tr></thead><tbody>
+        ${ladder.map((r) => `<tr class="${r.now ? "now" : ""}"><th scope="row">${r.now ? "now " : ""}${r.lossPct > 0 ? "−" + r.lossPct.toFixed(0) + "%" : "gain"}</th><td>${r.spot === null ? "—" : price(r.spot)}</td><td>${share(r.pProfit)}</td><td>${share(r.pHardStop)}</td><td>${ofMax(r.avgResultPct)}</td></tr>`).join("")}
+      </tbody></table>` : ""}
+      <p class="plan-note">A model, not a forecast. Losses and the average are shares of max loss. The stock is drawn at the spread's own IV, so the options get no edge, and on average holding and closing now land close together; what holding adds is the tail. The deeper the loss, the fewer runs end with a gain.</p>`;
+  }
 
   // ---- quality scatter -------------------------------------------------------
   function renderPlot() {
