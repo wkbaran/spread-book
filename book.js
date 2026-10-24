@@ -126,9 +126,9 @@
     };
   }
 
-  // Whether the page shows a spread's "from here" panel: it is losing, or it is in one of the decision lists.
-  // sim.js works the numbers out for every spread it can price; this only keeps the panel off quiet winners.
-  const showsFromHere = (p) => !!p.fromHere && (p.lossOfMax > 0 || !!p.exit || p.dte <= RULES.rollDays || Math.abs(p.toward) >= RULES.near);
+  // Whether the page shows a spread's "from here" panel: whenever sim.js could work the numbers out. A quiet
+  // winner's odds are as useful as a loser's (the owner's call, 2026-10-24), so there is no other condition.
+  const showsFromHere = (p) => !!p.fromHere;
 
   // The exit plan (sim.js) as rows from best to worst by the spread's price: the target, the watch line, the stop
   // and where it is now, each { key, debit, spot, shortDelta }. pct is the level's rule, signed like the P&L.

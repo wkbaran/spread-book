@@ -263,14 +263,14 @@ test('the At the stop list says where the exit is and how often runs from here e
     `Exit at $${amd.plan.stop.debit.toFixed(2)}, stock ≈ $${amd.plan.stop.spot.toFixed(2)}. ${Math.round(amd.fromHere.pProfit)}% of runs from here end with a gain`);
 });
 
-test('a quiet winner gets the exit plan but no from-here panel', async (t) => {
+test('a quiet winner gets the exit plan and the from-here panel too', async (t) => {
   const p = await open(t, planned());
   showSpread(p, 'NVDA', '150/155'); // +5%, 24 days, in no list
   assert.match(p.text('#detail h3'), /NVDA 150\/155/);
   assert.ok(p.$('#plan-open'));
   assert.ok(p.$('#drawer table.plan'));
-  assert.doesNotMatch(p.text('#drawer'), /If you hold from here/);
-  assert.doesNotMatch(p.text('#plan-open'), /Held from here/);
+  assert.match(p.text('#drawer'), /If you hold from here/);
+  assert.match(p.text('#plan-open'), /Held from here/);
 });
 
 test('a stock past the short strike is a warning, not an exit', async (t) => {

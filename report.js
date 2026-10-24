@@ -269,8 +269,8 @@
       <p class="plan-note">The spread's price is the rule. The stock price is where the spread would be at that price today: check it against a live quote during the day, and expect it to shift as days pass. Watch is a heads-up, not an exit. ${asOf}</p>`;
   }
 
-  // What holding does from here, and from deeper losses, as simulated by sim.js. Shown for spreads that are
-  // losing or in a decision list (SB.showsFromHere). Says "of simulated runs", never that a spread will recover.
+  // What holding does from here, and from deeper losses, as simulated by sim.js. Shown for every spread
+  // the model could price (SB.showsFromHere). Says "of simulated runs", never that a spread will recover.
   function fromHereHTML(p) {
     if (!SB.showsFromHere(p)) return "";
     const f = p.fromHere, hard = SB.RULES.hardStop, runs = snap.sim ? snap.sim.paths : "the";

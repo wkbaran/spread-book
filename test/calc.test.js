@@ -309,12 +309,10 @@ test('recoveryRows: the ladder with the current loss slotted in and marked now',
   assert.deepEqual(SB.recoveryRows({ recovery: null, fromHere: null }), []);
 });
 
-test('showsFromHere: a losing spread or one in a decision list, never one without the numbers', () => {
+test('showsFromHere: every spread with the numbers, winners included, never one without them', () => {
   assert.equal(SB.showsFromHere(withPlan()), true);
   const quiet = { lossOfMax: 0, returnPct: 10, exit: '', dte: 30, toward: 0.2 };
-  assert.equal(SB.showsFromHere(withPlan(quiet)), false);
-  assert.equal(SB.showsFromHere(withPlan({ ...quiet, dte: SB.RULES.rollDays })), true, 'roll window');
-  assert.equal(SB.showsFromHere(withPlan({ ...quiet, toward: SB.RULES.near })), true, 'getting close');
+  assert.equal(SB.showsFromHere(withPlan(quiet)), true, 'a quiet winner');
   assert.equal(SB.showsFromHere(withPlan({ ...quiet, exit: 'close', returnPct: 60 })), true, 'ready to close');
   assert.equal(SB.showsFromHere(withPlan({ fromHere: null })), false);
 });
