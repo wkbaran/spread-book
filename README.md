@@ -87,6 +87,7 @@ Each report is one self-contained HTML page. It embeds its snapshot as JSON, and
 - **What each spread pays for its risk.** Theta per unit gamma against theta per unit vega. Spreads below the median on both fall in the shaded corner; those are the first to close when you want capital back. The dashed lines are the book's medians, not the chart's midpoint. A spread whose export shows zero gamma (or vega) has no ratio, so its dot sits on the axis at 0; it is left out of the medians and the shaded corner.
 - **Scorecard.** Every spread with days left, PoP, credit, max loss, EV, progress toward an exit, distance to the short strike, the greeks (with a beta-weighted delta column), IV and both quality ratios, plus book totals. Select a heading to sort. A gain is shown as a share of max profit and a loss as a share of max loss, matching the two exit rules.
 - **Try a trade.** Paste one or more rows from the OptionStrat export, comma-separated or copied from Excel. Each trade is added to every total, the heatmap, the chart and the scorecard with a dashed outline, and the totals show how much it changes.
+- **Linking to a spread.** `?spread=<name>|<expiration>|<strikes>` (the spread's key, URL-encoded, as equity-watch's links send it) opens the page on that spread. An unknown key is ignored.
 - **Snapshot menu.** The 14 newest snapshots (about a week at two runs per trading day). Choosing one redraws the page in place in the current design, and the choice is kept in the URL (`?snapshot=<base>`) so it can be linked.
 
 <table>

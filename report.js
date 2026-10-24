@@ -53,6 +53,8 @@
   let selected = null;
   let sort = { key: "dte", dir: 1 };
   let planOpen = false; // the exit-plan drawer
+  // ?spread=<spreadKey> (equity-watch links here) selects that spread on the first draw, then is spent.
+  let wantedSpread = new URL(location.href).searchParams.get("spread");
   const acc = { greeks: false, risk: false }; // which detail accordions are open, kept across redraws
 
   function enrich(p, id) {
@@ -69,7 +71,11 @@
     tagCondors(all());
     // Ids are per snapshot, so keep the selection only when it's a trial trade.
     if (!hypos.some((p) => p.id === selected)) selected = [...base].sort((a, b) => a.toward - b.toward)[0]?.id ?? null;
+    const linked = wantedSpread && SB.findSpread(base, wantedSpread);
+    wantedSpread = null;
+    if (linked) selected = linked.id;
     render();
+    if (linked) $("detail").scrollIntoView({ block: "start" });
   }
 
   // ---- book strip ------------------------------------------------------------

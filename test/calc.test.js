@@ -316,3 +316,13 @@ test('showsFromHere: every spread with the numbers, winners included, never one 
   assert.equal(SB.showsFromHere(withPlan({ ...quiet, exit: 'close', returnPct: 60 })), true, 'ready to close');
   assert.equal(SB.showsFromHere(withPlan({ fromHere: null })), false);
 });
+
+test('findSpread: the spread a ?spread= link names, with or without equity-watch\'s episode suffix', () => {
+  const list = book();
+  const msft = by(list, 'MSFT');
+  assert.equal(SB.findSpread(list, SB.spreadKey(msft)), msft);
+  assert.equal(SB.findSpread(list, SB.spreadKey(msft) + '#2'), msft);
+  assert.equal(SB.findSpread(list, 'MSFT May 1st 400/405 Bull Put Spread|2026-05-01|395/400'), null);
+  assert.equal(SB.findSpread(list, ''), null);
+  assert.equal(SB.findSpread(list, null), null);
+});

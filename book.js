@@ -269,6 +269,13 @@
   // One spread across snapshots: the same name, expiration and strikes.
   const spreadKey = (p) => [p.name, p.expiration, p.strikes].join("|");
 
+  // The spread a link names (the report's ?spread=), by spreadKey. equity-watch's stops append "#<episode>",
+  // which is dropped: the page shows one snapshot, where a key is one spread. null when it isn't in the list.
+  const findSpread = (list, key) => {
+    const want = String(key || "").replace(/#\d+$/, "");
+    return (want && list.find((p) => !p.hypo && spreadKey(p) === want)) || null;
+  };
+
   // What a spread looked like in the snapshot where it first appeared (p enriched against snap).
   function entryOf(p, snap) {
     const spot = snap.spots && snap.spots[p.underlying];
@@ -342,7 +349,7 @@
     return { open, closed };
   }
 
-  const api = { RULES, isoDate, fromDenver, takenAt, enrich, tagCondors, decide, showsFromHere, planRows, recoveryRows, spreadKey, history,
+  const api = { RULES, isoDate, fromDenver, takenAt, enrich, tagCondors, decide, showsFromHere, planRows, recoveryRows, spreadKey, findSpread, history,
     sumOf, median, counts, addUp, heatmap, rank, plotModel, sortSpreads, bookTotals, parseTrade };
   if (typeof module === "object" && module.exports) module.exports = api;
   else globalThis.SpreadBook = api;

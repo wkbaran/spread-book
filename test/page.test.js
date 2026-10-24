@@ -346,3 +346,12 @@ test('the greeks and pay for risk are accordions that start closed and stay as l
   assert.deepEqual([acc('greeks').open, acc('risk').open], [true, false]);
   assert.match(p.text('#detail details[data-acc="greeks"]'), /Theta per day/);
 });
+
+test('?spread= opens the page on that spread', async (t) => {
+  const snap = planned(), key = SB.spreadKey(SB.enrich({ ...snap.positions.find((x) => x.underlying === 'CSCO') }, snap));
+  const p = await open(t, snap, { url: 'http://localhost/index.html?spread=' + encodeURIComponent(key + '#1') });
+  assert.match(p.text('#detail h3'), /^CSCO 67\.5\/72\.5/);
+  const q = await open(t, snap, { url: 'http://localhost/index.html?spread=nothing' });
+  assert.match(q.text('#detail h3'), /^AMD/, 'an unknown key falls back to the usual first spread');
+  assert.deepEqual([...p.errors, ...q.errors], []);
+});

@@ -15,11 +15,32 @@ const { takenAt, spreadKey } = require('./book');
 const { toSchwab, writeFileAtomic } = require('./betas');
 
 const ALERTS_SCHEMA = 'spread-book/alerts@1';
+const OPTIONSTRAT = /^https:\/\/optionstrat\.com\/[A-Za-z0-9_-]+$/;
+
+// Each spread's OptionStrat link, by spread name, from the spreadsheet download.js saved next to the CSV.
+// The export's Link column is a hyperlink there; the CSV keeps only its text ("Open"). An empty Map when the
+// spreadsheet is missing. The links open the saved trades (quantities included), so they go to equity-watch
+// in the shared file and nowhere public: not the snapshot, the report or latest.json.
+function optionStratLinks(xlsxFile) {
+  const links = new Map();
+  if (!fs.existsSync(xlsxFile)) return links;
+  const XLSX = require('xlsx'); // here, not at the top: brief.js loads this file where xlsx may not be installed
+  const wb = XLSX.readFile(xlsxFile);
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  for (const [addr, cell] of Object.entries(ws)) {
+    if (addr[0] === '!' || !cell.l || !OPTIONSTRAT.test(String(cell.l.Target))) continue;
+    const row = XLSX.utils.decode_cell(addr).r;
+    const name = ws[XLSX.utils.encode_cell({ r: row, c: 0 })];
+    if (name && String(name.v).toLowerCase().includes('spread')) links.set(String(name.v).trim(), String(cell.l.Target));
+  }
+  return links;
+}
 
 // One alert per open put or call spread: the stock price at which the spread's loss reaches the stop
 // (plan.stop.spot from sim.js), crossed downward for a put spread and upward for a call spread.
-// list is the snapshot's positions, enriched (book.js); open is history().open, for the episode.
-function buildSpreadAlerts(snap, list, open) {
+// list is the snapshot's positions, enriched (book.js); open is history().open, for the episode; links is
+// optionStratLinks(...), by spread name.
+function buildSpreadAlerts(snap, list, open, links = new Map()) {
   const alerts = [], unpriced = [];
   for (const p of list) {
     if (p.kind !== 'put' && p.kind !== 'call') continue;
@@ -41,6 +62,7 @@ function buildSpreadAlerts(snap, list, open) {
         long: { strike: p.kind === 'put' ? Math.min(...legs) : Math.max(...legs), type },
         contracts: p.plan.contracts, credit: Math.round((p.maxProfit / 100 / p.plan.contracts) * 100) / 100,
         stopDebit: stop.debit, debitNow: p.plan.debitNow, shortDeltaAtLevel: stop.shortDelta,
+        optionStratUrl: links.get(p.name) ?? null,
       },
     });
   }
@@ -64,4 +86,4 @@ function writeSpreadAlerts(dir, doc) {
   return file;
 }
 
-module.exports = { ALERTS_SCHEMA, buildSpreadAlerts, writeSpreadAlerts };
+module.exports = { ALERTS_SCHEMA, optionStratLinks, buildSpreadAlerts, writeSpreadAlerts };

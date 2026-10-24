@@ -74,3 +74,32 @@ test('brief.js writes the file into shared/ for the newest snapshot, and not for
   assert.equal(old.alerts, null, 'a brief for an old snapshot leaves the alerts alone');
   assert.equal(runBrief(snap).alerts, undefined, 'no shared/ directory, no file');
 });
+
+test('optionStratLinks reads the hyperlinks the CSV loses, by spread name, and only OptionStrat ones', () => {
+  const fs = require('node:fs'), os = require('node:os'), path = require('node:path'), XLSX = require('xlsx');
+  const { optionStratLinks } = require('../spread-alerts');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spread-book-xlsx-'));
+  try {
+    const rows = [['Name', 'Link'], ['Symbol', ''], ['MSFT May 1st 400/405 Bull Put Spread', 'Open'], ['.MSFT260501P405', ''], ['AMD Apr 24th 230/235 Bear Call Spread', 'Open']];
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws.B3.l = { Target: 'https://optionstrat.com/AbC123xyz' };
+    ws.B5.l = { Target: 'https://example.com/elsewhere' };
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Live');
+    const file = path.join(dir, 'export.xlsx');
+    XLSX.writeFile(wb, file);
+    const links = optionStratLinks(file);
+    assert.deepEqual([...links], [['MSFT May 1st 400/405 Bull Put Spread', 'https://optionstrat.com/AbC123xyz']]);
+    assert.equal(optionStratLinks(path.join(dir, 'missing.xlsx')).size, 0);
+    // And they reach the alerts file by name.
+    const snap = sim.annotate(snapshot()), list = snap.positions.map((p) => SB.enrich({ ...p }, snap));
+    const doc = buildSpreadAlerts(snap, list, SB.history([snap]).open, links);
+    assert.equal(of(doc, 'MSFT').spread.optionStratUrl, 'https://optionstrat.com/AbC123xyz');
+    assert.equal(of(doc, 'AMD').spread.optionStratUrl, null);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the OptionStrat links stay out of latest.json', () => {
+  const b = runBrief(sim.annotate(snapshot()), undefined, { shared: true });
+  assert.doesNotMatch(JSON.stringify({ ...b, alerts: undefined }), /optionstrat\.com/i);
+});

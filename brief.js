@@ -9,7 +9,7 @@
 const fs   = require('fs');
 const path = require('path');
 const { RULES, takenAt, enrich, tagCondors, decide, spreadKey, history } = require('./book');
-const { buildSpreadAlerts, writeSpreadAlerts } = require('./spread-alerts');
+const { buildSpreadAlerts, optionStratLinks, writeSpreadAlerts } = require('./spread-alerts');
 
 const reportsDir = path.join(__dirname, 'reports');
 
@@ -267,7 +267,8 @@ console.log(`Wrote → ${file} and reports/latest.json`);
 // The stop alerts for equity-watch (spread-alerts.js), from the newest snapshot only: a brief for an old
 // one must not move the live alerts back. Fixed ./shared, never $SHARED_DIR (see fetch.sh).
 if (path.resolve(snapFile) === path.resolve(newestSnapshot())) {
-  const doc = buildSpreadAlerts(snap, list, open);
+  const xlsx = path.join(__dirname, 'data', String(snap.source || '').replace(/\.csv$/, '.xlsx'));
+  const doc = buildSpreadAlerts(snap, list, open, snap.source ? optionStratLinks(xlsx) : new Map());
   const written = writeSpreadAlerts(path.join(__dirname, 'shared'), doc);
   console.log(written
     ? `Wrote → ${written} (${doc.alerts.length} stop alerts, ${doc.unpriced.length} unpriced${doc.complete ? '' : ', marked incomplete'})`
