@@ -138,13 +138,29 @@ node paper.js close P3 [--debit 0.40]                     # without --debit, at 
 node paper.js snapshot                                    # mark the book and build reports/paper/
 ```
 
-In the container, run them with `docker compose -f docker/compose.yaml exec spread-book node paper.js ...`.
+In the container, run them with `docker compose -f docker/compose.yaml exec spread-book node paper.js ...`. Or send a spread from spread-scanner's page with its **Paper trade** button (below).
 
 - **Opening** fills from the legs' quotes when the command runs, halfway from the mid to the natural price (sell the short at its bid, buy the long at its ask), rounded down to the cent, so paper results aren't flattered. The quotes it used are kept with the trade. Opening and closing at quotes refuse to run outside the regular session (9:30 to 16:00 New York) unless you pass `--anytime`, because after the close the quotes are the last prices, not a market. Fees are tastytrade's, $1 a contract to open and nothing to close, and count only in `list`'s P&L.
-- **The profit target** is a simulated resting buy-to-close limit at 50% of the credit. `check`, every 15 minutes through the session, fills it at its limit when buying back at the natural price costs no more. The 25% stop stays an alert you act on (close it by hand); paper spreads have no stop alerts yet.
+- **The profit target** is a simulated resting buy-to-close limit at 50% of the credit. `check`, every 15 minutes through the session, fills it at its limit when buying back at the natural price costs no more. The 25% stop stays an alert you act on (close it by hand).
+- **Stop alerts:** each paper snapshot writes `shared/paper-spread-alerts.json` for equity-watch, the same as the real book's file but marked `book: "paper"` with every key prefixed `paper:`. equity-watch watches those stops apart from the real ones and tags them *paper*. Because the ledger records every close, a paper book with nothing open writes an empty file, which cancels the paper stops.
+- **Betas:** `fetch.sh` adds the open paper trades' stocks to the ticker list for equity-watch's beta job, so paper spreads get betas too.
 - **Expiration:** a trade still open the day after it expires closes at what it is worth at the stock's price then. That's approximate, and shouldn't happen if the 21-day exit is kept.
-- **Snapshots** (8:05 and 2:05, before each publish) write the open trades as rows of the OptionStrat export (`data/paper/paper-<stamp>.csv`) and run `portfolio.js --paper` on them, so the exit plans and "from here" odds work as they do for the real book. When any open trade has no quotes, no snapshot is written: a spread left out would read as closed.
+- **Snapshots** (8:08 and 2:08, after equity-watch's beta job and before each publish) write the open trades as rows of the OptionStrat export (`data/paper/paper-<stamp>.csv`) and run `portfolio.js --paper` on them, so the exit plans and "from here" odds work as they do for the real book. When any open trade has no quotes, no snapshot is written: a spread left out would read as closed.
 - **The ledger** is `data/paper/ledger.json`, private like the rest of `data/`. Only `paper.js` writes it, under a lock (`data/paper/.lock`), and atomically.
+
+### The Paper trade button: tickets from spread-scanner
+
+spread-scanner's page can send a spread here as a paper trade. The button posts a *ticket* to the scanner's own site (`/api/tickets`), a Lambda there checks a token and the ticket's shape and queues it on SQS FIFO, and **`ticket-watch.js`**, an always-on second service in this compose file (`spread-book-tickets`), long-polls the queue and acts within a second or two. The queue and the Lambda are in spread-scanner's stack (`EnableTickets=true`); see its README.
+
+- The watcher opens the trade as `paper.js open` does, at live quotes when it acts, and records the ticket id with it, so one ticket can never open two trades, even if SQS delivers it twice.
+- It rejects a ticket more than 5 minutes old (its price would be stale) and one sent outside the regular session.
+- Each result goes to `tickets/<id>.json` in the scanner's bucket, which the page polls to say what happened. After a trade opens, the watcher takes a paper snapshot and publishes the paper book (`publish-paper.sh`), so it shows in a minute.
+- It deletes a ticket only after its result is recorded (`data/paper/tickets.json`). A failure such as tastytrade being down leaves the ticket on the queue; it comes back after a minute and is usually rejected as stale by then.
+- It writes the ledger under the same lock as `paper.js`, so it and the cron jobs never write at once. It writes a heartbeat (`data/paper/watcher.json`) that the container's health check reads. Without the `TICKETS_*` settings it idles.
+
+Its settings, from the scanner stack's outputs, go in `docker/.env`: `TICKETS_QUEUE_URL`, `TICKETS_BUCKET` (the scanner's bucket), and the watcher's own `TICKETS_AWS_ACCESS_KEY_ID` and `TICKETS_AWS_SECRET_ACCESS_KEY`, which can only receive and delete tickets and write their results.
+
+### Credentials
 
 It needs spread-book's own read-only tastytrade OAuth client: `TASTYTRADE_CLIENT_SECRET` and `TASTYTRADE_REFRESH_TOKEN` in `.env` (or `docker/.env` in the container). Create one in tastytrade's developer portal (an OAuth application with the read scope only, and a personal grant for its refresh token). Don't reuse spread-scanner's. Without the credentials the scheduled paper jobs do nothing.
 
@@ -163,6 +179,8 @@ It needs spread-book's own read-only tastytrade OAuth client: `TASTYTRADE_CLIENT
 | `brief.js` | Newest snapshot and its P&L | `reports/<base>-brief.json` and `latest.json`, the [brief for agents](#the-brief-for-agents), and `shared/spread-alerts.json` for equity-watch when `shared/` exists and the snapshot is the newest |
 | `spread-alerts.js` | An annotated snapshot | The stop alerts for equity-watch: one per open put or call spread, at the stock price of its exit plan's stop. The complete set every time, so a spread missing from it is cancelled there; `complete: false` and `unpriced` keep a bad run from reading as everything closing |
 | `paper.js` | `data/paper/ledger.json`, tastytrade quotes | [Paper trades](#paper-trades): `open`, `close`, `list`, `check` (resting targets) and `snapshot` (`data/paper/paper-<stamp>.csv`, then `portfolio.js --paper`) |
+| `ticket-watch.js` | spread-scanner's ticket queue (`TICKETS_*`) | The always-on ticket watcher: paper trades sent from the scanner's page, results to the scanner's bucket. The `spread-book-tickets` service |
+| `publish-paper.sh` | `reports/paper/` | Uploads the paper book to `paper/` and invalidates it. Run by `publish.sh` and, after a new paper trade, by the watcher |
 | `tastytrade.js` | `TASTYTRADE_*` | A small read-only tastytrade client (option and stock quotes) for `paper.js`; a port of spread-scanner's |
 | `generate-index.js` | File list | `reports/index.html`, `archive.html`, `snapshots.json` |
 | `sim.js` | A snapshot | The exit plan and the "from here" simulation for each spread, added to the snapshot by `portfolio.js`. Node only, a port of spread-scanner's `src/outcome.ts` |
@@ -189,7 +207,8 @@ docs/       README screenshots
 - **`page.test.js`**: builds a report from a synthetic book (`fixture.js`) exactly as `portfolio.js` does, runs its scripts in jsdom, and clicks through it. It checks that every spread is drawn, that the page's totals and decision lists match what `brief.js` writes for the same snapshot, and that the greek keys, sorting, trial trades and the snapshot menu work, including a book with no betas and one with no gamma.
 - **`sim.test.js`**: `sim.js`'s pricing, the inversion from a spread price to a stock price, the exit plan, and the simulation: a fairly priced spread held with no exits is worth what closing now is, the recovery ladder falls as the loss deepens, the results repeat, and the edge cases come out `null`. When spread-scanner is checked out next to this repo, it also checks the port against the scanner's `outcome.ts`; otherwise that test is skipped.
 - **`betas.test.js`**: the underlyings list and reading the betas file.
-- **`paper.test.js`**: the paper ledger and its tastytrade client, with fake quotes: the fill, tickets, the resting target, expiration, the snapshot rows (read back with the page's own parser), the session hours, the ledger file and its lock.
+- **`paper.test.js`**: the paper ledger and its tastytrade client, with fake quotes: the fill, tickets, the resting target, expiration, the snapshot rows (read back with the page's own parser), the session hours, the ledger file and its lock, and the paper stop alerts.
+- **`tickets.test.js`**: the ticket watcher's handling of one ticket: opening, repeats, stale and out-of-session tickets, failures left to retry, and (when spread-scanner sits next to this repo) that its ticket types match the scanner's Lambda.
 
 The page tests check what the page draws, not how it looks: colours, layout and the font need a browser. `portfolio.js` itself (the CSV parsing and the Yahoo fetch) has no automated tests; check it by running the pipeline on a sample CSV from `data/` and opening the result.
 
@@ -206,9 +225,9 @@ Job 2 never downloads, and it refuses a CSV more than 90 minutes old, so a faile
 | File | Purpose |
 |---|---|
 | `docker/Dockerfile` | Node 24 Alpine image with the AWS CLI and supercronic |
-| `docker/compose.yaml` | Runs the container; `data/` and `reports/` are bind-mounted from `~/spread-book/` on the Docker host, and `SHARED_DIR` from `docker/.env` is mounted at `/app/shared` for the files exchanged with equity-watch |
-| `docker/crontab` | `fetch.sh` at 7:45 AM and 1:25 PM, `publish.sh` at 8:10 AM and 2:10 PM, Mountain, weekdays; and the [paper](#paper-trades) jobs, `paper.js check` every 15 minutes from 7:00 to 1:45 PM and `paper.js snapshot` at 8:05 AM and 2:05 PM |
-| `docker/.env.example` | Template for `docker/.env` (OptionStrat, AWS and tastytrade credentials, and `SHARED_DIR`) |
+| `docker/compose.yaml` | Runs the container, and the ticket watcher (`spread-book-tickets`) from the same image; `data/` and `reports/` are bind-mounted from `~/spread-book/` on the Docker host, and `SHARED_DIR` from `docker/.env` is mounted at `/app/shared` for the files exchanged with equity-watch |
+| `docker/crontab` | `fetch.sh` at 7:45 AM and 1:25 PM, `publish.sh` at 8:10 AM and 2:10 PM, Mountain, weekdays; and the [paper](#paper-trades) jobs, `paper.js check` every 15 minutes from 7:00 to 1:45 PM and `paper.js snapshot` at 8:08 AM and 2:08 PM |
+| `docker/.env.example` | Template for `docker/.env` (OptionStrat, AWS and tastytrade credentials, the ticket queue, and `SHARED_DIR`) |
 
 The container runs with `TZ=America/Denver`, so the crontab is in local time and DST is handled automatically. The bind-mounted directories persist between runs, so `daily-pnl.js` always has an earlier snapshot to compare against.
 

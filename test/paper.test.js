@@ -238,3 +238,29 @@ test('the ledger file: missing is empty, unreadable is an error rather than empt
     assert.equal(await P.withLock(dir, async () => 'again'), 'again', 'the lock is released');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+// ---- stop alerts for equity-watch ---------------------------------------------------------------------
+
+test('paper stop alerts: the newest paper snapshot\'s stops, marked paper and keyed apart from the real book\'s', (t) => {
+  const { snapshot } = require('./fixture');
+  const { annotate } = require('../sim');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spread-book-paper-alerts-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const snap = snapshot({ paper: true });
+  annotate(snap);
+  fs.writeFileSync(path.join(dir, 'paper-2026-03-24_14-12-portfolio.json'), JSON.stringify(snap));
+  const doc = P.paperAlertsFromReports(dir);
+  assert.equal(doc.book, 'paper');
+  assert.equal(doc.complete, true);
+  assert.ok(doc.alerts.length > 0);
+  assert.ok([...doc.alerts.map((a) => a.key), ...doc.unpriced].every((k) => k.startsWith('paper:')));
+  const real = require('../spread-alerts').buildSpreadAlerts(snap, snap.positions.map((p) => SB.enrich({ ...p }, snap)), SB.history([snap]).open);
+  assert.deepEqual(doc.alerts.map((a) => a.key), real.alerts.map((a) => 'paper:' + a.key));
+  assert.equal(real.book, undefined, 'the real file is unchanged');
+});
+
+test('with every paper trade closed, the paper alerts file is empty and complete, so equity-watch cancels them', () => {
+  const doc = P.noPaperAlerts(Date.parse(AT));
+  assert.deepEqual({ book: doc.book, complete: doc.complete, alerts: doc.alerts, unpriced: doc.unpriced }, { book: 'paper', complete: true, alerts: [], unpriced: [] });
+  assert.equal(doc.schema, require('../spread-alerts').ALERTS_SCHEMA);
+});

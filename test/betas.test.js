@@ -75,3 +75,22 @@ test('a missing, unreadable or foreign file is null rather than an error', () =>
     assert.equal(B.readBetas(write('nobetas.json', doc({ betas: undefined }))), null);
   } finally { console.warn = warn; }
 });
+
+test('the open paper trades\' symbols are listed too, after the export\'s, once each; never on their own', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spread-book-betas-paper-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const ledger = path.join(dir, 'ledger.json');
+  assert.deepEqual(B.paperUnderlyings(ledger), [], 'no ledger, no paper symbols');
+  fs.writeFileSync(ledger, JSON.stringify({ trades: [{ symbol: 'SPY', close: null }, { symbol: 'AAPL', close: null }, { symbol: 'QQQ', close: { debit: 1 } }, { symbol: 'SPY', close: null }] }));
+  assert.deepEqual(B.paperUnderlyings(ledger), ['SPY', 'AAPL'], 'open trades only, once each');
+  const csv = path.join(dir, 'book.csv'), out = path.join(dir, 'underlyings.txt');
+  fs.writeFileSync(csv, CSV);
+  assert.equal(B.writeUnderlyings(csv, out, new Date(), B.paperUnderlyings(ledger)), 4);
+  assert.deepEqual(fs.readFileSync(out, 'utf8').split('\n').slice(1, -1), ['AAPL', 'AMD', 'BRK/B', 'SPY']);
+  fs.writeFileSync(csv, 'a\nb\n');
+  fs.rmSync(out);
+  assert.equal(B.writeUnderlyings(csv, out, new Date(), ['SPY']), 0, 'an empty export writes nothing, paper or not');
+  assert.equal(fs.existsSync(out), false);
+  fs.writeFileSync(ledger, '{');
+  assert.deepEqual(B.paperUnderlyings(ledger), []);
+});

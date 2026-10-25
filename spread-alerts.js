@@ -77,13 +77,21 @@ function buildSpreadAlerts(snap, list, open, links = new Map()) {
   };
 }
 
+// The paper book's alerts (paper.js), for equity-watch to hold apart from the real ones: book "paper" on the
+// file, and every key prefixed "paper:", so a paper spread and a real one on the same strikes are two stops.
+// equity-watch reconciles each book only against its own file (src/spreads/ there).
+function asPaper(doc) {
+  const key = (k) => 'paper:' + k;
+  return { ...doc, book: 'paper', alerts: doc.alerts.map((a) => ({ ...a, key: key(a.key) })), unpriced: doc.unpriced.map(key) };
+}
+
 // Writes the file into dir when dir exists (it is the directory shared with equity-watch; without it
 // there is no one to read the file). Returns the path written, or null.
-function writeSpreadAlerts(dir, doc) {
+function writeSpreadAlerts(dir, doc, name = 'spread-alerts.json') {
   if (!fs.existsSync(dir)) return null;
-  const file = path.join(dir, 'spread-alerts.json');
+  const file = path.join(dir, name);
   writeFileAtomic(file, JSON.stringify(doc, null, 2) + '\n');
   return file;
 }
 
-module.exports = { ALERTS_SCHEMA, optionStratLinks, buildSpreadAlerts, writeSpreadAlerts };
+module.exports = { ALERTS_SCHEMA, optionStratLinks, buildSpreadAlerts, asPaper, writeSpreadAlerts };

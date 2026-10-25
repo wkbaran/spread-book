@@ -2,7 +2,8 @@
 // What spread-book exchanges with equity-watch through the shared directory (./shared in
 // the container): the underlyings it needs betas for, and the betas it hands back.
 //
-//   node betas.js write-underlyings <csv> <file>   list the CSV's underlyings for equity-watch
+//   node betas.js write-underlyings <csv> <file>   list the CSV's underlyings, and the open paper trades'
+//                                                  (data/paper/ledger.json), for equity-watch
 //
 // Also required by portfolio.js, which reads the betas into each snapshot.
 
@@ -50,11 +51,26 @@ function writeFileAtomic(file, text) {
   }
 }
 
+// The symbols of the open paper trades (paper.js's ledger), so they get betas too. [] when there is no ledger;
+// one that won't parse is a warning, not a failure: the real book's list matters more.
+function paperUnderlyings(ledgerFile) {
+  if (!fs.existsSync(ledgerFile)) return [];
+  try {
+    const ledger = JSON.parse(fs.readFileSync(ledgerFile, 'utf8'));
+    return [...new Set((ledger.trades || []).filter(t => !t.close).map(t => t.symbol))];
+  } catch (e) {
+    console.warn(`WARN: ${ledgerFile} unreadable, so no paper symbols: ${e.message}`);
+    return [];
+  }
+}
+
 // One symbol per line; equity-watch ignores the '#' comment. Returns how many symbols were written.
-// Writes nothing for an empty list, so a bad download can't blank the list equity-watch last saw.
-function writeUnderlyings(csvFile, outFile, now = new Date()) {
-  const symbols = underlyingsFromCsv(fs.readFileSync(csvFile, 'utf8')).map(toSchwab);
-  if (!symbols.length) return 0;
+// extra are more symbols to list (the paper book's), after the export's. Writes nothing when the export has
+// no spreads, even with extra ones, so a bad download can't blank the list equity-watch last saw.
+function writeUnderlyings(csvFile, outFile, now = new Date(), extra = []) {
+  const fromCsv = underlyingsFromCsv(fs.readFileSync(csvFile, 'utf8'));
+  if (!fromCsv.length) return 0;
+  const symbols = [...new Set([...fromCsv, ...extra])].map(toSchwab);
   writeFileAtomic(outFile, `# written by spread-book from ${path.basename(csvFile)} at ${now.toISOString()}\n${symbols.join('\n')}\n`);
   return symbols.length;
 }
@@ -75,7 +91,7 @@ function readBetas(file) {
   return { asOf: doc.generatedAt, betas };
 }
 
-module.exports = { BETAS_SCHEMA, toSchwab, fromSchwab, underlyingsFromCsv, writeFileAtomic, writeUnderlyings, readBetas };
+module.exports = { BETAS_SCHEMA, toSchwab, fromSchwab, underlyingsFromCsv, paperUnderlyings, writeFileAtomic, writeUnderlyings, readBetas };
 
 if (require.main === module) {
   const [cmd, csv, out] = process.argv.slice(2);
@@ -83,6 +99,6 @@ if (require.main === module) {
     console.error('Usage: node betas.js write-underlyings <csv> <file>');
     process.exit(1);
   }
-  const n = writeUnderlyings(csv, out);
+  const n = writeUnderlyings(csv, out, new Date(), paperUnderlyings(path.join(__dirname, 'data', 'paper', 'ledger.json')));
   console.log(n ? `Wrote ${n} underlyings → ${out}` : `No spreads in ${csv}; left ${out} alone`);
 }

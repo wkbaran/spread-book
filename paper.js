@@ -20,6 +20,7 @@ const SB = require('./book');
 const { SIM, normalCdf } = require('./sim');
 const { Tastytrade, occSymbol, credentialsFromEnv } = require('./tastytrade');
 const { writeFileAtomic } = require('./betas');
+const { buildSpreadAlerts, asPaper, writeSpreadAlerts, ALERTS_SCHEMA } = require('./spread-alerts');
 
 const PAPER = {
   // An opening fills this far from the mid toward the natural price (0 is the mid, 1 the natural), so paper results
@@ -190,6 +191,32 @@ function snapshotCsv(ledger, quotes, spots, now) {
   return { csv: [...HEADER, ...rows].join('\n') + '\n', missing, count: open.length };
 }
 
+// ---- stop alerts for equity-watch -----------------------------------------------------------------
+// shared/paper-spread-alerts.json: the stops of the open paper trades, as spread-alerts.js builds them for the real
+// book but marked paper (asPaper), so equity-watch watches them apart. Unlike the real book's, closes are known
+// here: the ledger records them. So a paper book with nothing open writes an empty, complete file and every paper
+// stop is cancelled, where the real book can only leave its stops until the next export.
+
+const PAPER_REPORTS = path.join(__dirname, 'reports', 'paper');
+const SHARED = path.join(__dirname, 'shared'); // fixed ./shared, never $SHARED_DIR (see fetch.sh)
+
+// The alerts file for the newest paper snapshot in dir, its history from every paper snapshot there.
+function paperAlertsFromReports(dir = PAPER_REPORTS) {
+  const snaps = fs.readdirSync(dir).filter((f) => f.endsWith('-portfolio.json')).flatMap((f) => {
+    try { return [JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'))]; } catch (_) { return []; }
+  });
+  if (!snaps.length) return null;
+  const snap = snaps.reduce((a, b) => (Date.parse(SB.takenAt(b)) > Date.parse(SB.takenAt(a)) ? b : a));
+  const list = snap.positions.map((p) => SB.enrich({ ...p }, snap));
+  return asPaper(buildSpreadAlerts(snap, list, SB.history(snaps).open));
+}
+const noPaperAlerts = (now) => ({ schema: ALERTS_SCHEMA, book: 'paper', generatedAt: new Date(now).toISOString(), spotsAsOf: null, source: 'paper ledger', complete: true, alerts: [], unpriced: [] });
+
+function writePaperAlerts(doc) {
+  const file = doc && writeSpreadAlerts(SHARED, doc, 'paper-spread-alerts.json');
+  if (file) console.log(`Wrote → ${file} (${doc.alerts.length} paper stops)`);
+}
+
 // ---- files ----------------------------------------------------------------------------------------
 
 // The ledger, or an empty one when there is no file yet. A file that doesn't parse is an error, never an empty
@@ -309,14 +336,23 @@ const COMMANDS = {
   },
 
   async snapshot() {
-    if (!loadLedger().trades.some(isOpen)) { console.log('No open paper trades: no paper snapshot.'); return; }
+    const before = loadLedger();
+    if (!before.trades.some(isOpen)) {
+      console.log('No open paper trades: no paper snapshot.');
+      if (before.trades.length) writePaperAlerts(noPaperAlerts(Date.now())); // all closed: cancel their stops
+      return;
+    }
     const now = Date.now(), tt = client();
     const csvFile = await withLock(DIR, async () => {
       const ledger = loadLedger();
       const { quotes, spots, changed } = await update(ledger, tt, now);
       if (changed) saveLedger(ledger);
       const snap = snapshotCsv(ledger, quotes, spots, now);
-      if (!snap.count) { console.log('Every paper trade is closed: no paper snapshot.'); return null; }
+      if (!snap.count) {
+        console.log('Every paper trade is closed: no paper snapshot.');
+        writePaperAlerts(noPaperAlerts(now));
+        return null;
+      }
       if (snap.missing.length) throw new Error(`no quotes for ${snap.missing.join(', ')}, so no snapshot (one left out would read as closed)`);
       const file = path.join(DIR, `paper-${denverStamp(new Date(now))}.csv`);
       writeFileAtomic(file, snap.csv);
@@ -326,11 +362,12 @@ const COMMANDS = {
     if (!csvFile) return;
     const r = spawnSync(process.execPath, [path.join(__dirname, 'portfolio.js'), csvFile, '--paper'], { stdio: 'inherit' });
     if (r.status !== 0) throw new Error('portfolio.js failed on the paper snapshot');
+    writePaperAlerts(paperAlertsFromReports());
   },
 };
 
 module.exports = { PAPER, SCHEMA, emptyLedger, checkSpec, legsOf, quotesFor, openPrice, closePrice, openTrade, closeTrade, fillTargets, expireTrades,
-  chanceNow, rowOf, snapshotCsv, loadLedger, saveLedger, withLock, marketOpen, nyDate, denverStamp, denverShort, pnl };
+  chanceNow, rowOf, snapshotCsv, paperAlertsFromReports, noPaperAlerts, loadLedger, saveLedger, withLock, marketOpen, nyDate, denverStamp, denverShort, pnl };
 
 if (require.main === module) {
   // A local run reads .env like download.js does; in the container compose passes it in. Set variables win.

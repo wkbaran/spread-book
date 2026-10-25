@@ -19,3 +19,25 @@ services:
       # A directory, not a file (its write is a rename), and ":z", not ":Z", so both
       # containers can use it. SHARED_DIR comes from docker/.env and has no default.
       - ${SHARED_DIR:?set SHARED_DIR in docker/.env to the directory shared with equity-watch}:/app/shared:z
+
+  # The ticket watcher (ticket-watch.js): long-polls spread-scanner's ticket queue and opens paper trades the
+  # scanner page sends, within a second or two. Same image, same mounts, its own process. With no TICKETS_* in
+  # .env it idles. It writes the paper ledger under paper.js's lock, so it and the cron jobs never write at once.
+  spread-book-tickets:
+    image: spread-book
+    container_name: spread-book-tickets
+    depends_on: [spread-book]
+    restart: unless-stopped
+    env_file: .env
+    command: ["node", "ticket-watch.js"]
+    stop_grace_period: 30s # a long poll lasts up to 20 seconds
+    volumes:
+      - /var/home/core/spread-book/data:/app/data:z
+      - /var/home/core/spread-book/reports:/app/reports:z
+      - ${SHARED_DIR:?set SHARED_DIR in docker/.env to the directory shared with equity-watch}:/app/shared:z
+    healthcheck:
+      # Healthy while the loop writes its heartbeat, at least every 20 seconds (60 when idle).
+      test: ["CMD", "node", "-e", "process.exit(Date.now() - Date.parse(require('/app/data/paper/watcher.json').at) < 120000 ? 0 : 1)"]
+      interval: 60s
+      timeout: 10s
+      start_period: 30s

@@ -17,7 +17,7 @@ echo "==> Uploading reports to s3://$BUCKET/"
 # Not data/: the raw exports hold the OptionStrat saved-trade links, quantities and entry prices, and the site
 # is public. They stay on the Docker host's bind mount, where fetch.sh and report.sh need them.
 # index, archive and snapshot list are rebuilt from the full S3 listing below; the local copies only know this volume
-aws s3 sync reports/ "s3://$BUCKET/" --exclude 'index.html' --exclude 'archive.html' --exclude 'snapshots.json' --exclude 'latest.json' --only-show-errors
+aws s3 sync reports/ "s3://$BUCKET/" --exclude 'index.html' --exclude 'archive.html' --exclude 'snapshots.json' --exclude 'latest.json' --exclude 'paper/*' --only-show-errors
 # The brief for agents; it changes every run under the same name, like index.html
 aws s3 cp reports/latest.json "s3://$BUCKET/latest.json" --cache-control no-cache --content-type application/json --only-show-errors
 
@@ -28,11 +28,8 @@ for f in index.html archive.html snapshots.json; do
   aws s3 cp "reports/$f" "s3://$BUCKET/$f" --cache-control no-cache --only-show-errors
 done
 
-# The paper book (paper.js) went up with the sync above, under paper/. Its index and snapshot list change every
-# run under the same name too.
-for f in paper/index.html paper/archive.html paper/snapshots.json; do
-  if [[ -f "reports/$f" ]]; then aws s3 cp "reports/$f" "s3://$BUCKET/$f" --cache-control no-cache --only-show-errors; fi
-done
+# The paper book (paper.js), under paper/; the invalidation below covers it
+NO_INVALIDATE=1 bash publish-paper.sh
 
 echo "==> Invalidating CloudFront cache"
 aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION_ID" --paths "/*" \
