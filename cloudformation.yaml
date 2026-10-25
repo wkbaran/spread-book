@@ -2,7 +2,7 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   Spread Book — static report hosting.
   S3 bucket (private) + CloudFront (HTTPS) + IAM user for the Docker deployment,
-  which is the only publisher. The GitHub Actions OIDC role is no longer used.
+  which is the only publisher.
   IMPORTANT: Deploy this stack in us-east-1. ACM certificates used by
   CloudFront must live in us-east-1 regardless of where your bucket is.
 
@@ -129,8 +129,9 @@ Resources:
         DNSName: !GetAtt Distribution.DomainName
         EvaluateTargetHealth: false
 
-  # -- GitHub Actions OIDC federation ------------------------------------------
-  # Unused since the workflow was removed; publishing runs from Docker.
+  # -- GitHub Actions OIDC provider --------------------------------------------
+  # The account's one provider for GitHub Actions. This repo's workflow and its role are
+  # gone, but the deploy role of another site, in its own stack, trusts this provider, so it stays.
 
   GitHubOIDCProvider:
     Type: AWS::IAM::OIDCProvider
@@ -140,39 +141,6 @@ Resources:
         - sts.amazonaws.com
       ThumbprintList:
         - 6938fd4d98bab03faadb97b34396831e3780aea1
-
-  GitHubDeployRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub '${BucketName}-github-deploy'
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Federated: !Ref GitHubOIDCProvider
-            Action: sts:AssumeRoleWithWebIdentity
-            Condition:
-              StringEquals:
-                token.actions.githubusercontent.com:aud: sts.amazonaws.com
-              StringLike:
-                token.actions.githubusercontent.com:sub: repo:wkbaran/spread-book:*
-      Policies:
-        - PolicyName: DeployToS3AndInvalidateCache
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action: s3:ListBucket
-                Resource: !GetAtt Bucket.Arn
-              - Effect: Allow
-                Action:
-                  - s3:PutObject
-                  - s3:DeleteObject
-                Resource: !Sub '${Bucket.Arn}/*'
-              - Effect: Allow
-                Action: cloudfront:CreateInvalidation
-                Resource: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution}'
 
   # -- Docker deployment (docker/) ----------------------------------------------
   # Access key is created outside the stack (aws iam create-access-key) so the
@@ -216,10 +184,6 @@ Outputs:
   BucketName:
     Description: S3 bucket name
     Value: !Ref Bucket
-
-  DeployRoleArn:
-    Description: IAM role ARN for the removed GitHub Actions workflow (unused)
-    Value: !GetAtt GitHubDeployRole.Arn
 
   DockerPublishUser:
     Description: IAM user for the Docker deployment — create its access key with aws iam create-access-key
