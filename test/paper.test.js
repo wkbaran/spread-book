@@ -92,6 +92,8 @@ test('checkSpec: a plain bull put or bear call, the short strike nearer the mone
     'a call spread the wrong way round': { ...SPEC, side: 'call' },
     'no quantity': { ...SPEC, qty: 0 },
     'part of a contract': { ...SPEC, qty: 1.5 },
+    'strikes as strings': { ...SPEC, shortStrike: '600', longStrike: '595' },
+    'an endless strike': { ...SPEC, shortStrike: Infinity },
   })) assert.ok(P.checkSpec(s), what);
 });
 

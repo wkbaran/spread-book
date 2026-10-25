@@ -56,7 +56,9 @@ test('tickets that are stale, from outside the session, of another type or malfo
     ['no receipt time', body({ receivedAt: undefined }), /unknown/],
     ['another type', body({ type: 'real.open' }), /doesn't handle real\.open/],
     ['a bad spread', body({ trade: { ...trade, shortStrike: 590 } }), /bull put sells the higher strike/],
+    ['too many contracts', body({ trade: { ...trade, qty: 11 } }), /at most 10 contracts/],
     ['not JSON', '{', /not a ticket/],
+    ['an id that is a path', body({ id: '../../index' }), /not a ticket/],
   ]) {
     const r = await W.handle(b, s.deps);
     assert.equal(r.status, 'rejected', what);
@@ -102,4 +104,12 @@ test('the scanner\'s ticket Lambda and this watcher agree on the ticket types', 
   const m = /const TYPES = (\[[^\]]*\]);/.exec(fs.readFileSync(scannerStack, 'utf8'));
   assert.ok(m, 'TYPES moved in the scanner\'s template');
   assert.deepEqual(JSON.parse(m[1]).filter((x) => x !== 'ping').sort(), [...W.TICKET_TYPES].sort());
+});
+
+test('the scanner\'s ticket Lambda and this watcher accept the same ids and quantities', { skip: !fs.existsSync(scannerStack) && 'spread-scanner is not checked out next to this repo' }, () => {
+  const src = fs.readFileSync(scannerStack, 'utf8');
+  const id = /const ID = \/(.+)\/;/.exec(src), qty = /t\.qty > (\d+)\)/.exec(src);
+  assert.ok(id && qty, 'ID or the qty limit moved in the scanner\'s template');
+  assert.equal(id[1], W.TICKET_ID.source);
+  assert.equal(Number(qty[1]), W.WATCH.maxQty);
 });

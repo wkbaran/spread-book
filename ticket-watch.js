@@ -26,8 +26,12 @@ const { writeFileAtomic } = require('./betas');
 // Ticket types this watcher acts on. Keep in step with TYPES in spread-scanner's ticket Lambda ("ping" never
 // reaches the queue).
 const TICKET_TYPES = ['paper.open'];
+// The ids and quantities the Lambda accepts, checked again here rather than trusted: the id names the result's key
+// in the scanner's bucket. test/tickets.test.js compares both with the Lambda.
+const TICKET_ID = /^[A-Za-z0-9-]{8,64}$/;
 const WATCH = {
   maxAgeMs: 5 * 60_000,
+  maxQty: 10,
   waitSeconds: 20, // SQS long polling: the call returns as soon as a ticket arrives
   keepResults: 500,
 };
@@ -54,7 +58,7 @@ async function handle(body, deps) {
   const now = deps.now(), at = new Date(now).toISOString();
   let ticket;
   try { ticket = JSON.parse(body); } catch (_) { ticket = null; }
-  if (!ticket || typeof ticket.id !== 'string') return rejected(null, at, 'not a ticket');
+  if (!ticket || typeof ticket.id !== 'string' || !TICKET_ID.test(ticket.id)) return rejected(null, at, 'not a ticket');
   const done = loadResults(deps.resultsFile).results.find((r) => r.id === ticket.id);
   if (done) return { ...done, repeat: true };
   if (!TICKET_TYPES.includes(ticket.type)) return rejected(ticket.id, at, `this watcher doesn't handle ${ticket.type} tickets`);
@@ -64,6 +68,7 @@ async function handle(body, deps) {
   const spec = { ...ticket.trade };
   const bad = P.checkSpec(spec);
   if (bad) return rejected(ticket.id, at, bad);
+  if (spec.qty > WATCH.maxQty) return rejected(ticket.id, at, `a ticket opens at most ${WATCH.maxQty} contracts`);
   return P.withLock(deps.dir, async () => {
     const ledger = P.loadLedger(deps.ledgerFile);
     const opened = (t, again) => ({ id: ticket.id, status: 'opened', at, tradeId: t.id, spread: describe(t), credit: t.credit, mid: t.openMid, natural: t.openNatural, target: t.target.debit,
@@ -148,7 +153,7 @@ async function run() {
   }
 }
 
-module.exports = { TICKET_TYPES, WATCH, handle, loadResults, recordResult, config };
+module.exports = { TICKET_TYPES, TICKET_ID, WATCH, handle, loadResults, recordResult, config };
 
 if (require.main === module) {
   try { process.loadEnvFile(path.join(__dirname, '.env')); } catch (_) { /* no .env */ }

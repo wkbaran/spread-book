@@ -67,7 +67,7 @@ function checkSpec(s) {
   if (!/^[A-Z][A-Z0-9./]{0,9}$/.test(s.symbol || '')) return `not a symbol: ${s.symbol}`;
   if (s.side !== 'put' && s.side !== 'call') return `side is put or call, not ${s.side}`;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s.expiration || '')) return `expiration is YYYY-MM-DD, not ${s.expiration}`;
-  if (!(s.shortStrike > 0 && s.longStrike > 0)) return 'strikes must be positive numbers';
+  if (!(Number.isFinite(s.shortStrike) && Number.isFinite(s.longStrike) && s.shortStrike > 0 && s.longStrike > 0)) return 'strikes must be positive numbers';
   if (s.side === 'put' ? !(s.shortStrike > s.longStrike) : !(s.shortStrike < s.longStrike)) {
     return s.side === 'put' ? 'a bull put sells the higher strike' : 'a bear call sells the lower strike';
   }
