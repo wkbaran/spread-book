@@ -4,15 +4,15 @@
 
 **Which credit spreads should you close today, and where is the book's risk piling up?**
 
-Downloads your open positions from OptionStrat, maps theta, delta, gamma and vega by underlying and expiration, flags the spreads that have hit an exit rule, and publishes the result as the Spread book, a single-page report refreshed twice a trading day.
+Downloads your open positions from OptionStrat, maps theta, delta, gamma and vega by underlying and expiration, flags the spreads that have hit an exit rule, and publishes the result as the Spread book, a single-page report refreshed twice a trading day. A separate paper book tracks spreads opened at live quotes and never placed, for trying the exit plan on positions before trading them.
 
 ![Node 22.9+](https://img.shields.io/badge/node-22.9%2B-339933?logo=nodedotjs&logoColor=white)
 ![JavaScript](https://img.shields.io/badge/JavaScript-plain-F7DF1E?logo=javascript&logoColor=black)
-![One dependency](https://img.shields.io/badge/dependencies-1-informational)
+![Three dependencies](https://img.shields.io/badge/dependencies-3-informational)
 ![Docker](https://img.shields.io/badge/docker-ready-2496ED?logo=docker&logoColor=white)
 ![AWS](https://img.shields.io/badge/hosting-S3%20%2B%20CloudFront-FF9900?logo=amazonaws&logoColor=white)
 
-[What it uses](#what-it-uses) · [Quick start](#quick-start) · [The report](#the-report) · [Scripts](#scripts) · [Scheduled publishing](#scheduled-publishing-docker)
+[What it uses](#what-it-uses) · [Quick start](#quick-start) · [The report](#the-report) · [Paper trades](#paper-trades) · [Scripts](#scripts) · [Scheduled publishing](#scheduled-publishing-docker)
 
 <img src="docs/screenshots/overview.png" alt="The Spread book report: exit decisions, book totals, the theta heatmap and a spread's detail" width="900">
 
@@ -25,15 +25,17 @@ Only OptionStrat and Node.js are needed. Everything else is optional.
 | What | Service | Needed? |
 |---|---|---|
 | Positions and greeks | [OptionStrat](https://optionstrat.com) Saved Trades, exported as xlsx through its API | Yes. Requires an OptionStrat account |
-| xlsx → CSV conversion | [SheetJS](https://sheetjs.com/) (`xlsx`), the only npm dependency | Yes, runs locally |
+| xlsx → CSV conversion | [SheetJS](https://sheetjs.com/) (`xlsx`) | Yes, runs locally |
 | Stop alerts | The sibling project equity-watch watches each spread's stop level every 15 minutes, from `shared/spread-alerts.json` | Optional. Without a shared directory nothing is written |
 | Betas | The sibling project equity-watch: its `beta` command asks Schwab and hands the result over through a shared directory | Optional. Weights each spread's delta; the column is blank for a spread without a beta, or when the betas are more than 10 days old |
 | Underlying prices | [Yahoo Finance](https://finance.yahoo.com/) chart API, for daily P&L attribution, the distance to each short strike, and SPY's price for beta-weighting | Optional. Free, no key; those features are skipped without it |
+| Paper trades | [tastytrade](https://developer.tastytrade.com)'s API, read-only, for option and stock quotes | Optional. Only the [paper book](#paper-trades) uses it |
+| Paper trade tickets | AWS SQS, through spread-scanner's stack, read with the AWS SDK (`@aws-sdk/client-sqs`, `@aws-sdk/client-s3`) | Optional. Only the ticket watcher uses it |
 | Report font | [Archivo](https://fonts.google.com/specimen/Archivo) from Google Fonts | Loaded by the browser |
 | Hosting | AWS S3 + CloudFront (`cloudformation.yaml`) | Optional. Reports are self-contained HTML files |
 | Scheduling | Docker with [supercronic](https://github.com/aptible/supercronic) | Optional |
 
-There's no browser automation, framework or build step. Downloads call the OptionStrat API directly, and each report is one HTML file with its data, styles and script inlined.
+The three npm dependencies are `xlsx` and the two AWS SDK clients. There's no browser automation, framework or build step. Downloads call the OptionStrat API directly, and each report is one HTML file with its data, styles and script inlined.
 
 ## Quick start
 
@@ -146,7 +148,7 @@ In the container, run them with `docker compose -f docker/compose.yaml exec spre
 - **Betas:** `fetch.sh` adds the open paper trades' stocks to the ticker list for equity-watch's beta job, so paper spreads get betas too.
 - **Expiration:** a trade still open the day after it expires closes at what it is worth at the stock's price then. That's approximate, and shouldn't happen if the 21-day exit is kept.
 - **Snapshots** (8:08 and 2:08, after equity-watch's beta job and before each publish) write the open trades as rows of the OptionStrat export (`data/paper/paper-<stamp>.csv`) and run `portfolio.js --paper` on them, so the exit plans and "from here" odds work as they do for the real book. When any open trade has no quotes, no snapshot is written: a spread left out would read as closed.
-- **The ledger** is `data/paper/ledger.json`, private like the rest of `data/`. Only `paper.js` writes it, under a lock (`data/paper/.lock`), and atomically.
+- **The ledger** is `data/paper/ledger.json`, private like the rest of `data/`. It is written only through `paper.js` (its commands and the ticket watcher, below), under a lock (`data/paper/.lock`), and atomically.
 
 ### The Paper trade button: tickets from spread-scanner
 
@@ -160,19 +162,19 @@ spread-scanner's page can send a spread here as a paper trade. The button posts 
 
 Its settings, from the scanner stack's outputs, go in `docker/.env`: `TICKETS_QUEUE_URL`, `TICKETS_BUCKET` (the scanner's bucket), and the watcher's own `TICKETS_AWS_ACCESS_KEY_ID` and `TICKETS_AWS_SECRET_ACCESS_KEY`, which can only receive and delete tickets and write their results.
 
-### Credentials
+### tastytrade credentials
 
-It needs spread-book's own read-only tastytrade OAuth client: `TASTYTRADE_CLIENT_SECRET` and `TASTYTRADE_REFRESH_TOKEN` in `.env` (or `docker/.env` in the container). Create one in tastytrade's developer portal (an OAuth application with the read scope only, and a personal grant for its refresh token). Don't reuse spread-scanner's. Without the credentials the scheduled paper jobs do nothing.
+The paper book needs a read-only tastytrade refresh token of its own: `TASTYTRADE_CLIENT_SECRET`, `TASTYTRADE_REFRESH_TOKEN` and `TASTYTRADE_CLIENT_ID` in `.env` (or `docker/.env` in the container). In my.tastytrade.com, under Manage → My Profile → API → OAuth Applications, open the application's **Manage** page and **Create Grant** with the read scope; the grant's refresh token doesn't expire. A second grant on the same application as spread-scanner's is fine: each has its own refresh token and can be deleted alone. The client secret is shared, so regenerating it invalidates every grant. Without the credentials the scheduled paper jobs do nothing.
 
 ## Scripts
 
 | Script | Input | Output |
 |---|---|---|
 | `run.sh` | — | Both jobs in turn, for a local run: `fetch.sh`, then `report.sh` |
-| `fetch.sh` | `.env` | Job 1: `data/*.csv` from OptionStrat, and `shared/underlyings.txt` for equity-watch's beta job when `shared/` exists |
+| `fetch.sh` | `.env` | Job 1: `data/*.csv` from OptionStrat, and `shared/underlyings.txt` for equity-watch's beta job when `shared/` exists, with the open paper trades' stocks added |
 | `report.sh [csv]` | The newest CSV, or the one named | Job 2's analysis: portfolio report, daily P&L and the brief. With no argument it refuses a CSV more than `MAX_AGE_MIN` (default 90) minutes old, because that means `fetch.sh` failed |
-| `publish.sh [csv]` | The same | `report.sh`, then upload to S3, regenerate the index and invalidate CloudFront. Job 2 |
-| `betas.js` | CSV, `shared/betas.json` | Writes the underlyings list for equity-watch (`write-underlyings <csv> <file>`); `portfolio.js` uses it to read the betas back |
+| `publish.sh [csv]` | The same | `report.sh`, then upload to S3 (the paper book through `publish-paper.sh`), regenerate the index and invalidate CloudFront. Job 2 |
+| `betas.js` | CSV, the paper ledger, `shared/betas.json` | Writes the underlyings list for equity-watch (`write-underlyings <csv> <file>`), the export's stocks and the open paper trades'; `portfolio.js` uses it to read the betas back |
 | `download.js` | `.env` | `data/*.csv` (exports Group: Live from OptionStrat, converts xlsx → CSV) |
 | `portfolio.js <csv> [--paper]` | CSV file | `reports/*-portfolio.html` (with `--paper`, in `reports/paper/` and headed as paper), `*-portfolio.json` (the positions with their exit `plan`, `fromHere` and `recovery`, plus the underlying prices as `spots`) and `*-prices.json` |
 | `daily-pnl.js` | Two newest snapshots | `reports/*-daily-pnl.html` and `<base>-pnl.json`, P&L attribution between runs |
@@ -190,9 +192,9 @@ It needs spread-book's own read-only tastytrade OAuth client: `TASTYTRADE_CLIENT
 | `index.js`, `whatif.js` | CSV file | The legacy heatmaps report |
 
 ```
-data/       source CSVs (gitignored)
+data/       source CSVs, and data/paper/ (the paper ledger, its snapshots' CSVs, ticket results) (gitignored)
 test/       unit and page tests (jsdom)
-reports/    generated reports, JSON snapshots and index.html (gitignored)
+reports/    generated reports, JSON snapshots and index.html; reports/paper/ for the paper book (gitignored)
 docker/     Dockerfile, compose file, crontab and env template for scheduled publishing
 shared/     the directory shared with equity-watch (gitignored; a bind mount in the container)
 docs/       README screenshots
@@ -206,7 +208,7 @@ docs/       README screenshots
 - **`calc.test.js`**: the calculations the report page draws, also in `book.js`: the heatmap grid and its ordering, ranks, the chart's scaling and medians, scorecard sorting and totals, the trial-trade parser, and the reader for spread-scanner's `#try=` links.
 - **`page.test.js`**: builds a report from a synthetic book (`fixture.js`) exactly as `portfolio.js` does, runs its scripts in jsdom, and clicks through it. It checks that every spread is drawn, that the page's totals and decision lists match what `brief.js` writes for the same snapshot, and that the greek keys, sorting, trial trades and the snapshot menu work, including a book with no betas and one with no gamma.
 - **`sim.test.js`**: `sim.js`'s pricing, the inversion from a spread price to a stock price, the exit plan, and the simulation: a fairly priced spread held with no exits is worth what closing now is, the recovery ladder falls as the loss deepens, the results repeat, and the edge cases come out `null`. When spread-scanner is checked out next to this repo, it also checks the port against the scanner's `outcome.ts`; otherwise that test is skipped.
-- **`betas.test.js`**: the underlyings list and reading the betas file.
+- **`betas.test.js`**: the underlyings list (with the open paper trades' stocks) and reading the betas file.
 - **`paper.test.js`**: the paper ledger and its tastytrade client, with fake quotes: the fill, tickets, the resting target, expiration, the snapshot rows (read back with the page's own parser), the session hours, the ledger file and its lock, and the paper stop alerts.
 - **`tickets.test.js`**: the ticket watcher's handling of one ticket: opening, repeats, stale and out-of-session tickets, failures left to retry, and (when spread-scanner sits next to this repo) that its ticket types match the scanner's Lambda.
 
@@ -218,13 +220,16 @@ The `docker/` directory publishes to the S3 bucket and CloudFront site described
 
 1. **`fetch.sh`** at 7:45 AM and 1:25 PM: downloads the open spreads from OptionStrat and writes `shared/underlyings.txt`.
 2. **equity-watch's beta job**, in its own container at 8:05 AM and 2:05 PM: reads that list and writes `shared/betas.json`.
-3. **`publish.sh`** at 8:10 AM and 2:10 PM: builds the report from the CSV job 1 left, reads the betas, and uploads.
+3. **`paper.js snapshot`** at 8:08 AM and 2:08 PM: marks the [paper book](#paper-trades) and builds `reports/paper/`. It does nothing without open paper trades.
+4. **`publish.sh`** at 8:10 AM and 2:10 PM: builds the report from the CSV job 1 left, reads the betas, and uploads it and the paper book.
+
+`paper.js check` runs every 15 minutes through the session to fill the paper book's resting profit targets. A second service from the same image, `spread-book-tickets`, runs the [ticket watcher](#the-paper-trade-button-tickets-from-spread-scanner) all the time.
 
 Job 2 never downloads, and it refuses a CSV more than 90 minutes old, so a failed download can't republish an old export as new. A missing or old `betas.json` doesn't stop the report. The snapshot records when the betas were computed. Prices (and so the strike distance) are fetched when job 2 runs, 25 to 45 minutes after the positions; the snapshot records when as `spotsAsOf`.
 
 | File | Purpose |
 |---|---|
-| `docker/Dockerfile` | Node 24 Alpine image with the AWS CLI and supercronic |
+| `docker/Dockerfile` | Node 24 Alpine image with the AWS CLI and supercronic, for both services |
 | `docker/compose.yaml` | Runs the container, and the ticket watcher (`spread-book-tickets`) from the same image; `data/` and `reports/` are bind-mounted from `~/spread-book/` on the Docker host, and `SHARED_DIR` from `docker/.env` is mounted at `/app/shared` for the files exchanged with equity-watch |
 | `docker/crontab` | `fetch.sh` at 7:45 AM and 1:25 PM, `publish.sh` at 8:10 AM and 2:10 PM, Mountain, weekdays; and the [paper](#paper-trades) jobs, `paper.js check` every 15 minutes from 7:00 to 1:45 PM and `paper.js snapshot` at 8:08 AM and 2:08 PM |
 | `docker/.env.example` | Template for `docker/.env` (OptionStrat, AWS and tastytrade credentials, the ticket queue, and `SHARED_DIR`) |
@@ -267,11 +272,11 @@ The container is the only publisher. The GitHub Actions workflow was removed bec
 
 `package-lock.json` pins every dependency to an exact version and integrity hash, so installs are reproducible and a tampered package fails verification. Docker uses `npm ci`, which also refuses to run if the lockfile and `package.json` disagree. Review lockfile diffs whenever a dependency is added or upgraded.
 
-`.env`, `docker/.env` and `.session.json` hold credentials and are gitignored.
+`.env`, `docker/.env` and `.session.json` hold credentials and are gitignored. The AWS keys in `docker/.env` are split by job: the publish key (`AWS_*`) can only write the site's bucket and invalidate its cache, and the ticket watcher's (`TICKETS_*`) can only take tickets off spread-scanner's queue and write their results. The tastytrade grant is read-only.
 
 ## Disclaimer
 
-A personal tool for tracking my own positions. Greeks, PoP and prices come from OptionStrat and Yahoo Finance as-is, and nothing here is investment advice. Check positions with your broker before acting on a number.
+A personal tool for tracking my own positions. Greeks, PoP and prices come from OptionStrat, Yahoo Finance and (for paper trades) tastytrade as-is, and nothing here is investment advice. Check positions with your broker before acting on a number.
 
 ## License
 
