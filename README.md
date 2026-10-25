@@ -160,7 +160,7 @@ spread-scanner's page can send a spread here as a paper trade. The button posts 
 - It deletes a ticket only after its result is recorded (`data/paper/tickets.json`). A failure such as tastytrade being down leaves the ticket on the queue; it comes back after a minute and is usually rejected as stale by then.
 - It writes the ledger under the same lock as `paper.js`, so it and the cron jobs never write at once. It writes a heartbeat (`data/paper/watcher.json`) that the container's health check reads. Without the `TICKETS_*` settings it idles.
 
-Its settings, from the scanner stack's outputs, go in `docker/.env`: `TICKETS_QUEUE_URL`, `TICKETS_BUCKET` (the scanner's bucket), and the watcher's own `TICKETS_AWS_ACCESS_KEY_ID` and `TICKETS_AWS_SECRET_ACCESS_KEY`, which can only receive and delete tickets and write their results.
+Its settings go in `docker/.env`: `TICKETS_QUEUE_URL` (the scanner stack's `TicketQueueUrl` output), `TICKETS_BUCKET` (the scanner's bucket), and the watcher's own `TICKETS_AWS_ACCESS_KEY_ID` and `TICKETS_AWS_SECRET_ACCESS_KEY`, which can only receive and delete tickets and write their results. The two keys are in Secrets Manager, not the stack's outputs: `aws secretsmanager get-secret-value --secret-id spread-scanner/<bucket>/ticket-watcher`.
 
 ### tastytrade credentials
 
