@@ -280,6 +280,111 @@ test('a parsed trade enriches like any other spread', () => {
   assert.ok(t.z > 0);
 });
 
+// ---- tryTrade and readTry: trades sent from spread-scanner ----------------------------------------------
+
+// A scanner trade in the scanner's units: per-share greeks, iv a fraction, popPct in percent, credit per share.
+const leg = (strike, delta, gamma, theta, vega, iv) => ({ strike, delta, gamma, theta, vega, iv });
+const TRY = {
+  symbol: 'AAPL', side: 'put', expiration: '2026-04-17', qty: 1, credit: 0.61, popPct: 74.15,
+  short: leg(240, -0.30, 0.0300, -0.060, 0.250, 0.3114),
+  long: leg(235, -0.237, 0.0252, -0.048, 0.217, 0.3250),
+};
+const encode = (payload) => '#try=' + Buffer.from(JSON.stringify(payload)).toString('base64url');
+
+test('tryTrade turns a scanner bull put into a trial trade in the export\'s units', () => {
+  const t = SB.tryTrade(TRY);
+  assert.equal(t.name, 'AAPL Apr 17th 235/240 Bull Put Spread'); // the export's own name for this spread
+  assert.equal(t.underlying, 'AAPL');
+  assert.equal(t.type, 'Bull Put');
+  assert.equal(t.expiration, '2026-04-17');
+  assert.equal(t.returnPct, 0);
+  assert.equal(t.credit, 61);
+  assert.equal(t.maxProfit, 61);
+  assert.equal(t.maxLoss, 439);
+  close(t.chance, 0.7415);
+  // (bought − sold) × 100: a bull put leans long, and the seller collects theta
+  close(t.delta, 6.3);
+  close(t.gamma, -0.48);
+  close(t.theta, 1.2);
+  close(t.vega, -3.3);
+  close(t.iv, 31.14); // the short leg's, in percent
+  assert.equal(t.hypo, true);
+});
+
+test('tryTrade: a bear call is named low/high like the export, with a negative delta', () => {
+  const t = SB.tryTrade({ ...TRY, symbol: 'AMD', side: 'call', expiration: '2026-05-01',
+    short: leg(230, 0.22, 0.02, -0.07, 0.2, 0.5), long: leg(235, 0.17, 0.017, -0.06, 0.18, 0.52) });
+  assert.equal(t.name, 'AMD May 1st 230/235 Bear Call Spread');
+  assert.equal(t.type, 'Bear Call');
+  assert.ok(t.delta < 0);
+  assert.ok(t.theta > 0);
+});
+
+test('tryTrade: contracts scale money and greeks, half-dollar strikes keep their decimal, ordinals read right', () => {
+  const t = SB.tryTrade({ ...TRY, qty: 2, short: { ...TRY.short, strike: 102.5 }, long: { ...TRY.long, strike: 97.5 } });
+  assert.equal(t.credit, 122);
+  assert.equal(t.maxLoss, 878);
+  close(t.delta, 12.6);
+  assert.match(t.name, / 97\.5\/102\.5 /);
+  const day = (d) => SB.tryTrade({ ...TRY, expiration: `2026-04-${String(d).padStart(2, '0')}` }).name.split(' ')[2];
+  assert.deepEqual([1, 2, 3, 4, 11, 12, 13, 21, 22, 23, 30].map(day), ['1st', '2nd', '3rd', '4th', '11th', '12th', '13th', '21st', '22nd', '23rd', '30th']);
+});
+
+test('tryTrade: a greek a leg lacks counts as 0, and a missing quantity is one contract', () => {
+  const { qty, ...noQty } = TRY;
+  const t = SB.tryTrade({ ...noQty, short: { ...TRY.short, gamma: null }, long: { ...TRY.long, gamma: undefined } });
+  assert.equal(t.gamma, 0);
+  assert.equal(t.credit, 61);
+});
+
+test('tryTrade rejects what is not a plain bull put or bear call', () => {
+  for (const [what, t] of Object.entries({
+    'nothing': null,
+    'no legs': { ...TRY, short: undefined },
+    'an unknown side': { ...TRY, side: 'straddle' },
+    'a bad date': { ...TRY, expiration: '4/17/26' },
+    'a month that is not one': { ...TRY, expiration: '2026-13-01' },
+    'a put spread the wrong way round': { ...TRY, short: TRY.long, long: TRY.short },
+    'equal strikes': { ...TRY, long: { ...TRY.long, strike: 240 } },
+    'no credit': { ...TRY, credit: 0 },
+    'a credit as wide as the spread': { ...TRY, credit: 5 },
+    'a fractional quantity': { ...TRY, qty: 0.5 },
+    'a symbol with markup in it': { ...TRY, symbol: '<b>X' },
+  })) assert.equal(SB.tryTrade(t), null, what);
+});
+
+test('a tried trade enriches like a pasted one, and gets the same spreadKey as the export\'s row', () => {
+  const t = SB.enrich(SB.tryTrade(TRY), snapshot({ spots: { AAPL: 250 } }));
+  assert.equal(t.kind, 'put');
+  assert.equal(t.strikes, '235/240');
+  assert.equal(t.shortStrike, 240);
+  assert.equal(t.width, 5);
+  assert.ok(t.z > 0);
+  const row = SB.enrich(SB.parseTrade('AAPL Apr 17th 235/240 Bull Put Spread,0%,$0,3/4/26 19:06,4/17/26 20:00, $61.00 ,74.15%, $439.00 , $61.00 ,0,0,6.3,1.2,-0.48,-3.3,1,31.14%'), snapshot());
+  assert.equal(SB.spreadKey(t), SB.spreadKey(row));
+});
+
+test('readTry reads the trades in a #try= fragment', () => {
+  const two = SB.readTry(encode({ v: 1, trades: [TRY, { ...TRY, side: 'call' }] }));
+  assert.equal(two.length, 2);
+  assert.equal(two[0].name, 'AAPL Apr 17th 235/240 Bull Put Spread');
+  assert.equal(two[1], null, 'a trade that cannot be read is null, so the page can say so');
+  assert.equal(SB.readTry(encode({ v: 1, trades: [TRY] }).slice(1))[0].credit, 61, 'with or without the #');
+});
+
+test('readTry: no try= is null; an unreadable one is [null]', () => {
+  assert.equal(SB.readTry(''), null);
+  assert.equal(SB.readTry('#'), null);
+  assert.equal(SB.readTry('#other=1'), null);
+  for (const [what, hash] of Object.entries({
+    'empty': '#try=',
+    'not base64': '#try=!!!',
+    'not JSON': '#try=' + Buffer.from('nope').toString('base64url'),
+    'another version': encode({ v: 2, trades: [TRY] }),
+    'no trades': encode({ v: 1, trades: [] }),
+  })) assert.deepEqual(SB.readTry(hash), [null], what);
+});
+
 // ---- the exit plan and the "from here" panel ---------------------------------------------------------------
 
 const level = (debit, spot, shortDelta = 0.3) => ({ debit, spot, shortDelta, pnl: 0 });

@@ -389,6 +389,36 @@
   });
   $("whatif-add").addEventListener("click", addTrial);
   $("whatif-text").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); addTrial(); } });
+  // #try=… from spread-scanner's "Try in spread-book" button (SB.readTry). It is read on load and whenever the
+  // fragment changes (the scanner reuses this tab, so its trades stack), then cleared, so a reload doesn't
+  // repeat it. A spread already on trial is selected rather than added twice.
+  function addTried() {
+    const parsed = SB.readTry(location.hash);
+    if (!parsed) return;
+    const url = new URL(location.href);
+    url.hash = "";
+    history.replaceState(null, "", url);
+    const bad = parsed.filter((p) => !p).length;
+    if (bad) {
+      $("whatif").hidden = false;
+      $("whatif-btn").setAttribute("aria-expanded", "true");
+      $("whatif-error").hidden = false;
+      $("whatif-error").textContent = `${bad === parsed.length ? "The spread" : `${bad} of ${parsed.length} spreads`} sent from the scanner couldn't be read.`;
+    }
+    let last = null;
+    for (const t of parsed.filter(Boolean)) {
+      const p = enrich(t, "h" + ++hypoSeq);
+      const have = hypos.find((h) => SB.spreadKey(h) === SB.spreadKey(p));
+      if (!have) hypos.push(p);
+      last = have || p;
+    }
+    if (!last) return;
+    tagCondors(all());
+    selected = last.id;
+    render();
+    $("detail").scrollIntoView({ block: "start" });
+  }
+  window.addEventListener("hashchange", addTried);
   function renderChips() {
     $("chips").innerHTML = hypos.map((p) => `<span class="chip">${esc(p.underlying)} ${esc(p.strikes)} ${p.kind}<button type="button" data-id="${p.id}" aria-label="Remove ${esc(p.name)}">×</button></span>`).join("");
   }
@@ -467,5 +497,6 @@
 
   renderSnapshots(embeddedBase);
   useSnapshot(embedded);
+  addTried();
   initSnapshots();
 })();

@@ -187,6 +187,47 @@ test('a trial trade that makes an iron condor links to its partner', async (t) =
   assert.match(p.text('#detail .also'), /Iron condor with the 230\/235 call spread/);
 });
 
+// ---- trades sent from spread-scanner (#try=) ----
+const leg = (strike, delta) => ({ strike, delta, gamma: 0.02, theta: -0.05, vega: 0.2, iv: 0.3 });
+const TRY = { symbol: 'GOOGL', side: 'put', expiration: '2026-04-17', qty: 1, credit: 0.8, popPct: 80, short: leg(275, -0.25), long: leg(270, -0.2) };
+const tryHash = (...trades) => '#try=' + Buffer.from(JSON.stringify({ v: 1, trades })).toString('base64url');
+
+test('#try= adds the scanner\'s spread as a trial trade, selects it, and is cleared from the URL', async (t) => {
+  const p = await open(t, snapshot(), { url: 'http://localhost/index.html?snapshot=fixture' + tryHash(TRY) });
+  assert.deepEqual(p.errors, []);
+  assert.equal(p.$$('#sc tbody tr').length, 10);
+  assert.equal(p.$$('#sc tbody tr.hypo').length, 1);
+  assert.equal(p.text('#chips .chip').replace('×', '').trim(), 'GOOGL 270/275 put');
+  assert.match(p.text('#detail'), /GOOGL/);
+  assert.equal(p.window.location.hash, '', 'a reload does not add it again');
+  assert.equal(p.window.location.search, '?snapshot=fixture', 'the rest of the URL is kept');
+  assert.equal(p.$('#whatif-error').hidden, true);
+});
+
+test('a later #try= in the same tab stacks, and the same spread twice is one trial trade', async (t) => {
+  const p = await open(t, snapshot(), { url: 'http://localhost/index.html' + tryHash(TRY) });
+  const call = { ...TRY, side: 'call', short: leg(300, 0.2), long: leg(305, 0.15) };
+  for (const h of [tryHash(call), tryHash(TRY)]) {
+    p.window.location.hash = h;
+    await p.tick(); await p.tick();
+  }
+  assert.equal(p.$$('#chips .chip').length, 2);
+  assert.match(p.text('#chips'), /GOOGL 300\/305 call/);
+  assert.equal(p.$$('#sc tbody tr.hypo').length, 2);
+  assert.deepEqual(p.errors, []);
+});
+
+test('a #try= the page cannot read says so and adds nothing', async (t) => {
+  const p = await open(t, snapshot(), { url: 'http://localhost/index.html#try=garbage' });
+  assert.equal(p.$$('#sc tbody tr').length, 9);
+  assert.equal(p.$('#whatif').hidden, false);
+  assert.equal(p.$('#whatif-error').hidden, false);
+  assert.match(p.text('#whatif-error'), /^The spread sent from the scanner couldn't be read/);
+  const q = await open(t, snapshot(), { url: 'http://localhost/index.html' + tryHash(TRY, { ...TRY, credit: 9 }) });
+  assert.equal(q.$$('#sc tbody tr.hypo').length, 1, 'the good one is still added');
+  assert.match(q.text('#whatif-error'), /^1 of 2 spreads/);
+});
+
 // ---- snapshot menu ----
 const older = () => snapshot({ source: 'live-active-by-symbol-2026-03-23_19-39.csv', generatedAt: '2026-03-23T01:39:00.000Z', positions: snapshot().positions.slice(0, 4) });
 const LIST = [{ base: 'fixture', generatedAt: '2026-03-24T20:12:00.000Z' }, { base: 'older', generatedAt: '2026-03-23T19:39:00.000Z' }];

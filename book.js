@@ -266,6 +266,64 @@
     };
   }
 
+  // ---- trades sent from spread-scanner ("Try in spread-book") -------------------------------------
+  // The scanner's button opens this page with #try=<base64url of JSON>, { v: 1, trades: [...] }, each trade
+  //   { symbol, side: "put"|"call", expiration: "YYYY-MM-DD", qty, credit, popPct,
+  //     short: { strike, delta, gamma, theta, vega, iv }, long: { ... } }
+  // in the scanner's own units: credit per share at the mid, popPct in percent, leg greeks per share (theta per
+  // day, vega per vol point) and iv as a fraction. A fragment never reaches the server or CloudFront's logs.
+
+  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const ordinal = (d) => d + ([11, 12, 13].includes(d) ? "th" : ["th", "st", "nd", "rd"][d % 10] || "th");
+  const cents = (n) => Math.round(n * 100) / 100;
+
+  // One scanner trade as a trial trade, in the export's units, the same fields parseTrade returns: the name in
+  // OptionStrat's form (strikes low/high whichever the side), money in dollars for the position, chance as a
+  // fraction, greeks in share-equivalents ((leg bought − leg sold) × 100 × contracts, so a bull put has a
+  // positive delta and a credit spread a positive theta) and iv in percent, the short leg's. A greek a leg
+  // lacks counts as 0. null when the trade isn't a plain bull put or bear call.
+  function tryTrade(t) {
+    const finite = (n) => typeof n === "number" && Number.isFinite(n);
+    if (!t || typeof t !== "object" || !t.short || !t.long) return null;
+    const { symbol, side, expiration, short: s, long: l } = t;
+    const qty = t.qty === undefined ? 1 : t.qty;
+    const ymd = /^(\d{4})-(\d{2})-(\d{2})$/.exec(expiration || "");
+    if (!/^[A-Z][A-Z0-9./]{0,9}$/.test(symbol || "") || (side !== "put" && side !== "call") || !ymd) return null;
+    const [, , month, day] = ymd.map(Number);
+    if (!(month >= 1 && month <= 12 && day >= 1 && day <= 31)) return null;
+    if (!(finite(s.strike) && finite(l.strike) && s.strike > 0 && l.strike > 0)) return null;
+    // A bull put sells the higher strike, a bear call the lower.
+    if (side === "put" ? !(s.strike > l.strike) : !(s.strike < l.strike)) return null;
+    const width = Math.abs(s.strike - l.strike);
+    if (!(finite(t.credit) && t.credit > 0 && t.credit < width) || !(Number.isInteger(qty) && qty > 0)) return null;
+    const n = 100 * qty;
+    const net = (k) => ((finite(l[k]) ? l[k] : 0) - (finite(s[k]) ? s[k] : 0)) * n;
+    const type = side === "put" ? "Bull Put" : "Bear Call";
+    return {
+      name: `${symbol} ${MONTHS[month - 1]} ${ordinal(day)} ${Math.min(s.strike, l.strike)}/${Math.max(s.strike, l.strike)} ${type} Spread`,
+      underlying: symbol, expiration, type,
+      returnPct: 0, credit: cents(t.credit * n), chance: finite(t.popPct) ? t.popPct / 100 : 0,
+      maxLoss: cents((width - t.credit) * n), maxProfit: cents(t.credit * n),
+      delta: net("delta"), theta: net("theta"), gamma: net("gamma"), vega: net("vega"), iv: finite(s.iv) ? s.iv * 100 : 0,
+      hypo: true,
+    };
+  }
+
+  // The trades in a location.hash's try= value, each tryTrade(...) (null for one that can't be read).
+  // null when the hash has no try=; [null] when its value isn't a payload this page reads.
+  function readTry(hash) {
+    const v = new URLSearchParams(String(hash || "").replace(/^#/, "")).get("try");
+    if (v === null) return null;
+    try {
+      const b64 = v.replace(/-/g, "+").replace(/_/g, "/");
+      const json = JSON.parse(atob(b64 + "=".repeat((4 - (b64.length % 4)) % 4)));
+      if (!json || json.v !== 1 || !Array.isArray(json.trades) || !json.trades.length) return [null];
+      return json.trades.map(tryTrade);
+    } catch (_) {
+      return [null];
+    }
+  }
+
   // One spread across snapshots: the same name, expiration and strikes.
   const spreadKey = (p) => [p.name, p.expiration, p.strikes].join("|");
 
@@ -350,7 +408,7 @@
   }
 
   const api = { RULES, isoDate, fromDenver, takenAt, enrich, tagCondors, decide, showsFromHere, planRows, recoveryRows, spreadKey, findSpread, history,
-    sumOf, median, counts, addUp, heatmap, rank, plotModel, sortSpreads, bookTotals, parseTrade };
+    sumOf, median, counts, addUp, heatmap, rank, plotModel, sortSpreads, bookTotals, parseTrade, tryTrade, readTry };
   if (typeof module === "object" && module.exports) module.exports = api;
   else globalThis.SpreadBook = api;
 })();
