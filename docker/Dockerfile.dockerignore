@@ -2,8 +2,8 @@
 .github
 .claude
 .playwright-mcp
-.env
-.session.json
+**/.env
+**/.session.json
 node_modules
 data
 reports
