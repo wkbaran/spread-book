@@ -41,7 +41,7 @@ function weekLabel(monday) {
 
 const asset = f => fs.readFileSync(path.join(__dirname, f), 'utf8');
 
-function generateArchive(sorted) {
+function generateArchive(sorted, title = 'Spread book') {
   // Group by week
   const weeks = new Map(); // monday ISO → [{base, heatmaps, portfolio}]
   for (const [base, files] of sorted) {
@@ -98,7 +98,7 @@ ${asset('theme.css')}
 </head>
 <body>
 <header class="top">
-  <h1 class="brand"><a href="index.html">Spread book</a></h1>
+  <h1 class="brand"><a href="index.html">${title}</a></h1>
   <span class="spacer"></span>
   <nav><a href="index.html">Latest report</a></nav>
 </header>
@@ -122,8 +122,9 @@ function snapshotList(allFiles) {
     .slice(0, SNAPSHOT_LIMIT);
 }
 
-module.exports = function generateIndex(fileList) {
-  const allFiles = fileList || fs.readdirSync(REPORTS_DIR);
+// dir is the reports directory (reports/, or reports/paper/ for paper trades) and title the archive's heading.
+module.exports = function generateIndex(fileList, dir = REPORTS_DIR, title) {
+  const allFiles = fileList || fs.readdirSync(dir);
   const files = allFiles
     .filter(f => f.endsWith('.html') && f !== 'index.html' && f !== 'archive.html');
 
@@ -140,17 +141,17 @@ module.exports = function generateIndex(fileList) {
   // Sort groups by embedded date descending (most recent first)
   const sorted = [...groups.entries()].sort((a, b) => b[0].localeCompare(a[0]));
 
-  fs.mkdirSync(REPORTS_DIR, { recursive: true });
+  fs.mkdirSync(dir, { recursive: true });
 
   if (sorted.length) {
     const [, { heatmaps, portfolio }] = sorted[0];
     const latestFile = portfolio || heatmaps;
-    const content = fs.readFileSync(path.join(REPORTS_DIR, latestFile), 'utf8');
-    fs.writeFileSync(path.join(REPORTS_DIR, 'index.html'), content);
+    const content = fs.readFileSync(path.join(dir, latestFile), 'utf8');
+    fs.writeFileSync(path.join(dir, 'index.html'), content);
   }
 
-  fs.writeFileSync(path.join(REPORTS_DIR, 'archive.html'), generateArchive(sorted));
-  fs.writeFileSync(path.join(REPORTS_DIR, 'snapshots.json'), JSON.stringify(snapshotList(allFiles), null, 2));
+  fs.writeFileSync(path.join(dir, 'archive.html'), generateArchive(sorted, title));
+  fs.writeFileSync(path.join(dir, 'snapshots.json'), JSON.stringify(snapshotList(allFiles), null, 2));
 
   console.log(`Index updated — ${sorted.length} report${sorted.length === 1 ? '' : 's'}`);
 };

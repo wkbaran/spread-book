@@ -12,12 +12,15 @@ const escAttr = s => String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').re
 const embedJSON = obj => JSON.stringify(obj).replace(/</g, '\\u003c');
 
 function buildPage(snapshot, basename) {
+  // A paper snapshot (paper.js) says so in the title and the header, so it is never mistaken for the real book.
+  const paper = !!snapshot.paper;
+  const name = paper ? 'Paper book' : 'Spread book';
   return `<!DOCTYPE html>
   <html lang="en" data-theme="dark" data-palette="#0e2a31,#ece4d0,#f3a83b">
   <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Spread book</title>
+  <title>${name}</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect x='12' y='12' width='34' height='34' rx='6' fill='%23f3a83b'/><rect x='54' y='54' width='34' height='34' rx='6' fill='%23f3a83b'/><rect x='54' y='12' width='34' height='34' rx='6' fill='%23f3a83b' opacity='.45'/><rect x='12' y='54' width='34' height='34' rx='6' fill='%23f3a83b' opacity='.45'/></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -33,7 +36,7 @@ function buildPage(snapshot, basename) {
   </head>
   <body data-base="${escAttr(basename)}">
   <header class="top">
-    <h1 class="brand"><a href="index.html">Spread book</a></h1>
+    <h1 class="brand"><a href="index.html">${name}</a></h1>${paper ? '\n    <span class="paper-tag" title="Paper trades: opened and closed at prices from live quotes, never placed. Not in the real book.">Paper trades</span>' : ''}
     <label class="snap">Snapshot <select id="snapshot"></select></label>
     <span class="snap-status" id="snap-status" role="status"></span>
     <span class="spacer"></span>

@@ -8,6 +8,7 @@
 .snap { color: var(--sub); font-size: 0.86rem; display: flex; align-items: center; gap: 0.45rem; }
 .snap select { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-s); padding: 0.2rem 0.4rem; }
 .snap-status { color: var(--muted); font-size: 0.8rem; }
+.paper-tag { font-size: 0.75rem; font-weight: 650; text-transform: uppercase; letter-spacing: 0.06em; padding: 0.12rem 0.5rem; border: 1px dashed var(--signal); border-radius: 999px; color: var(--signal); }
 .snap-status.error { color: var(--signal); }
 
 /* ---- what-if panel -------------------------------------------------- */

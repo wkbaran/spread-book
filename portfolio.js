@@ -7,8 +7,11 @@ const { buildPage } = require('./page');
 const { readBetas } = require('./betas');
 const { annotate } = require('./sim');
 
-const csvFile = process.argv[2];
-if (!csvFile) { console.error('Usage: node portfolio.js <csv-file>'); process.exit(1); }
+// --paper: a snapshot of paper trades (paper.js), written to reports/paper/ and marked as paper, so it never joins
+// the real book's history, latest.json or the stop alerts, which read reports/ only.
+const paper = process.argv.includes('--paper');
+const csvFile = process.argv.slice(2).find(a => !a.startsWith('--'));
+if (!csvFile) { console.error('Usage: node portfolio.js <csv-file> [--paper]'); process.exit(1); }
 
 // ── CSV Parsing ──────────────────────────────────────────────────────────────
 
@@ -92,7 +95,7 @@ if (!spreads.length) { console.error('No spreads found in', csvFile); process.ex
 console.log(`Parsed ${spreads.length} spread positions`);
 
 const basename = path.basename(csvFile, '.csv');
-const reportsDir = path.join(__dirname, 'reports');
+const reportsDir = path.join(__dirname, 'reports', ...(paper ? ['paper'] : []));
 fs.mkdirSync(reportsDir, { recursive: true });
 
 // ── JSON snapshot ─────────────────────────────────────────────────────────────
@@ -192,6 +195,7 @@ async function fetchCurrentPrices(underlyings) {
   const snapshot = {
     generatedAt: snapshotTime.toISOString(),
     source:      path.basename(csvFile),
+    paper:       paper || undefined,
     spots:       prices,
     spotsAsOf,
     spy,
@@ -237,5 +241,5 @@ async function fetchCurrentPrices(underlyings) {
   fs.writeFileSync(outFile, buildPage(snapshot, basename));
   console.log(`Wrote → ${outFile}`);
 
-  require('./generate-index')();
+  require('./generate-index')(undefined, reportsDir, paper ? 'Paper book' : undefined);
 })().catch(e => { console.error(e); process.exit(1); });

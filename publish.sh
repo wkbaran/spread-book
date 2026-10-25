@@ -28,6 +28,12 @@ for f in index.html archive.html snapshots.json; do
   aws s3 cp "reports/$f" "s3://$BUCKET/$f" --cache-control no-cache --only-show-errors
 done
 
+# The paper book (paper.js) went up with the sync above, under paper/. Its index and snapshot list change every
+# run under the same name too.
+for f in paper/index.html paper/archive.html paper/snapshots.json; do
+  if [[ -f "reports/$f" ]]; then aws s3 cp "reports/$f" "s3://$BUCKET/$f" --cache-control no-cache --only-show-errors; fi
+done
+
 echo "==> Invalidating CloudFront cache"
 aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION_ID" --paths "/*" \
   --query 'Invalidation.Id' --output text

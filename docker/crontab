@@ -7,3 +7,8 @@
 # If either time moves, move the other, and keep the gap under report.sh's 90-minute limit.
 10 8  * * 1-5  /app/publish.sh
 10 14 * * 1-5  /app/publish.sh
+# Paper trades (paper.js), kept apart from the real book in reports/paper/. check fills resting profit targets
+# from live quotes every 15 minutes through the session (7:30 to 14:00 here; it does nothing outside it, or
+# with no open paper trades). snapshot marks the paper book just before each publish, which uploads it.
+*/15 7-13 * * 1-5  cd /app && node paper.js check
+5 8,14 * * 1-5  cd /app && node paper.js snapshot

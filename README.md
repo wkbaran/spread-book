@@ -126,6 +126,28 @@ The decision lists come from `book.js`, the same code the report page runs, so t
 
 The same name, expiration and strikes is one spread until an *episode break* starts a new `episode` (`reopened: true`, with `episodeBreak` saying why): `"gap"` when it was missing from a snapshot between two sightings, `"resized"` when its credit or max loss changed by a cent. Each episode has its own entry and closed record. A snapshot file that fails to parse is skipped, so it can't cause a gap. One blind spot: a close and reopen at the same credit between two consecutive snapshots (1.6 to 66 hours apart, median 5.7) is invisible. Percentages in the sizing fields run 0 to 100.
 
+## Paper trades
+
+`paper.js` keeps a ledger of paper spreads, opened and closed at prices from live tastytrade quotes and never placed anywhere. Each snapshot marks them and draws them as their own report, the same page as the real one, headed "Paper book" and published under `paper/`. They are never in the real book's totals, its history, `latest.json` or the stop alerts for equity-watch.
+
+```bash
+node paper.js open SPY put 2026-12-04 600 595 [--qty 1]   # sell the 600/595 bull put
+node paper.js open QQQ call 2026-12-04 650 655            # sell the 650/655 bear call
+node paper.js list
+node paper.js close P3 [--debit 0.40]                     # without --debit, at the natural price now
+node paper.js snapshot                                    # mark the book and build reports/paper/
+```
+
+In the container, run them with `docker compose -f docker/compose.yaml exec spread-book node paper.js ...`.
+
+- **Opening** fills from the legs' quotes when the command runs, halfway from the mid to the natural price (sell the short at its bid, buy the long at its ask), rounded down to the cent, so paper results aren't flattered. The quotes it used are kept with the trade. Opening and closing at quotes refuse to run outside the regular session (9:30 to 16:00 New York) unless you pass `--anytime`, because after the close the quotes are the last prices, not a market. Fees are tastytrade's, $1 a contract to open and nothing to close, and count only in `list`'s P&L.
+- **The profit target** is a simulated resting buy-to-close limit at 50% of the credit. `check`, every 15 minutes through the session, fills it at its limit when buying back at the natural price costs no more. The 25% stop stays an alert you act on (close it by hand); paper spreads have no stop alerts yet.
+- **Expiration:** a trade still open the day after it expires closes at what it is worth at the stock's price then. That's approximate, and shouldn't happen if the 21-day exit is kept.
+- **Snapshots** (8:05 and 2:05, before each publish) write the open trades as rows of the OptionStrat export (`data/paper/paper-<stamp>.csv`) and run `portfolio.js --paper` on them, so the exit plans and "from here" odds work as they do for the real book. When any open trade has no quotes, no snapshot is written: a spread left out would read as closed.
+- **The ledger** is `data/paper/ledger.json`, private like the rest of `data/`. Only `paper.js` writes it, under a lock (`data/paper/.lock`), and atomically.
+
+It needs spread-book's own read-only tastytrade OAuth client: `TASTYTRADE_CLIENT_SECRET` and `TASTYTRADE_REFRESH_TOKEN` in `.env` (or `docker/.env` in the container). Create one in tastytrade's developer portal (an OAuth application with the read scope only, and a personal grant for its refresh token). Don't reuse spread-scanner's. Without the credentials the scheduled paper jobs do nothing.
+
 ## Scripts
 
 | Script | Input | Output |
@@ -136,10 +158,12 @@ The same name, expiration and strikes is one spread until an *episode break* sta
 | `publish.sh [csv]` | The same | `report.sh`, then upload to S3, regenerate the index and invalidate CloudFront. Job 2 |
 | `betas.js` | CSV, `shared/betas.json` | Writes the underlyings list for equity-watch (`write-underlyings <csv> <file>`); `portfolio.js` uses it to read the betas back |
 | `download.js` | `.env` | `data/*.csv` (exports Group: Live from OptionStrat, converts xlsx → CSV) |
-| `portfolio.js <csv>` | CSV file | `reports/*-portfolio.html`, `*-portfolio.json` (the positions with their exit `plan`, `fromHere` and `recovery`, plus the underlying prices as `spots`) and `*-prices.json` |
+| `portfolio.js <csv> [--paper]` | CSV file | `reports/*-portfolio.html` (with `--paper`, in `reports/paper/` and headed as paper), `*-portfolio.json` (the positions with their exit `plan`, `fromHere` and `recovery`, plus the underlying prices as `spots`) and `*-prices.json` |
 | `daily-pnl.js` | Two newest snapshots | `reports/*-daily-pnl.html` and `<base>-pnl.json`, P&L attribution between runs |
 | `brief.js` | Newest snapshot and its P&L | `reports/<base>-brief.json` and `latest.json`, the [brief for agents](#the-brief-for-agents), and `shared/spread-alerts.json` for equity-watch when `shared/` exists and the snapshot is the newest |
 | `spread-alerts.js` | An annotated snapshot | The stop alerts for equity-watch: one per open put or call spread, at the stock price of its exit plan's stop. The complete set every time, so a spread missing from it is cancelled there; `complete: false` and `unpriced` keep a bad run from reading as everything closing |
+| `paper.js` | `data/paper/ledger.json`, tastytrade quotes | [Paper trades](#paper-trades): `open`, `close`, `list`, `check` (resting targets) and `snapshot` (`data/paper/paper-<stamp>.csv`, then `portfolio.js --paper`) |
+| `tastytrade.js` | `TASTYTRADE_*` | A small read-only tastytrade client (option and stock quotes) for `paper.js`; a port of spread-scanner's |
 | `generate-index.js` | File list | `reports/index.html`, `archive.html`, `snapshots.json` |
 | `sim.js` | A snapshot | The exit plan and the "from here" simulation for each spread, added to the snapshot by `portfolio.js`. Node only, a port of spread-scanner's `src/outcome.ts` |
 | `book.js` | — | Exit rules, strike distance, history and the calculations the page draws, shared by `report.js` and `brief.js` |
@@ -165,6 +189,7 @@ docs/       README screenshots
 - **`page.test.js`**: builds a report from a synthetic book (`fixture.js`) exactly as `portfolio.js` does, runs its scripts in jsdom, and clicks through it. It checks that every spread is drawn, that the page's totals and decision lists match what `brief.js` writes for the same snapshot, and that the greek keys, sorting, trial trades and the snapshot menu work, including a book with no betas and one with no gamma.
 - **`sim.test.js`**: `sim.js`'s pricing, the inversion from a spread price to a stock price, the exit plan, and the simulation: a fairly priced spread held with no exits is worth what closing now is, the recovery ladder falls as the loss deepens, the results repeat, and the edge cases come out `null`. When spread-scanner is checked out next to this repo, it also checks the port against the scanner's `outcome.ts`; otherwise that test is skipped.
 - **`betas.test.js`**: the underlyings list and reading the betas file.
+- **`paper.test.js`**: the paper ledger and its tastytrade client, with fake quotes: the fill, tickets, the resting target, expiration, the snapshot rows (read back with the page's own parser), the session hours, the ledger file and its lock.
 
 The page tests check what the page draws, not how it looks: colours, layout and the font need a browser. `portfolio.js` itself (the CSV parsing and the Yahoo fetch) has no automated tests; check it by running the pipeline on a sample CSV from `data/` and opening the result.
 
@@ -182,8 +207,8 @@ Job 2 never downloads, and it refuses a CSV more than 90 minutes old, so a faile
 |---|---|
 | `docker/Dockerfile` | Node 24 Alpine image with the AWS CLI and supercronic |
 | `docker/compose.yaml` | Runs the container; `data/` and `reports/` are bind-mounted from `~/spread-book/` on the Docker host, and `SHARED_DIR` from `docker/.env` is mounted at `/app/shared` for the files exchanged with equity-watch |
-| `docker/crontab` | `fetch.sh` at 7:45 AM and 1:25 PM, `publish.sh` at 8:10 AM and 2:10 PM, Mountain, weekdays |
-| `docker/.env.example` | Template for `docker/.env` (OptionStrat and AWS credentials, and `SHARED_DIR`) |
+| `docker/crontab` | `fetch.sh` at 7:45 AM and 1:25 PM, `publish.sh` at 8:10 AM and 2:10 PM, Mountain, weekdays; and the [paper](#paper-trades) jobs, `paper.js check` every 15 minutes from 7:00 to 1:45 PM and `paper.js snapshot` at 8:05 AM and 2:05 PM |
+| `docker/.env.example` | Template for `docker/.env` (OptionStrat, AWS and tastytrade credentials, and `SHARED_DIR`) |
 
 The container runs with `TZ=America/Denver`, so the crontab is in local time and DST is handled automatically. The bind-mounted directories persist between runs, so `daily-pnl.js` always has an earlier snapshot to compare against.
 

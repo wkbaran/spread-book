@@ -228,6 +228,16 @@ test('a #try= the page cannot read says so and adds nothing', async (t) => {
   assert.match(q.text('#whatif-error'), /^1 of 2 spreads/);
 });
 
+test('a paper snapshot says so in the title and the header; the real book does not', async (t) => {
+  const p = await open(t, snapshot({ paper: true }));
+  assert.equal(p.document.title, 'Paper book');
+  assert.equal(p.text('.brand'), 'Paper book');
+  assert.equal(p.text('.paper-tag'), 'Paper trades');
+  const q = await open(t);
+  assert.equal(q.document.title, 'Spread book');
+  assert.equal(q.$('.paper-tag'), null);
+});
+
 // ---- snapshot menu ----
 const older = () => snapshot({ source: 'live-active-by-symbol-2026-03-23_19-39.csv', generatedAt: '2026-03-23T01:39:00.000Z', positions: snapshot().positions.slice(0, 4) });
 const LIST = [{ base: 'fixture', generatedAt: '2026-03-24T20:12:00.000Z' }, { base: 'older', generatedAt: '2026-03-23T19:39:00.000Z' }];
