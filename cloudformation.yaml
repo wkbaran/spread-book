@@ -57,9 +57,10 @@ Resources:
               Service: cloudfront.amazonaws.com
             Action: s3:GetObject
             Resource: !Sub '${Bucket.Arn}/*'
+            # This distribution only, not any in the account.
             Condition:
-              StringLike:
-                AWS:SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/*'
+              StringEquals:
+                AWS:SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution}'
 
   # -- ACM Certificate ---------------------------------------------------------
 
@@ -74,9 +75,10 @@ Resources:
 
   # -- CloudFront Distribution -------------------------------------------------
 
+  # Created before the bucket policy, which names it. On a fresh stack the site serves 403s
+  # for the moment between the two.
   Distribution:
     Type: AWS::CloudFront::Distribution
-    DependsOn: BucketPolicy
     Properties:
       DistributionConfig:
         Enabled: true
