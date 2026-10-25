@@ -59,7 +59,7 @@ OPTIONSTRAT_PASSWORD=yourpassword
 OPTIONSTRAT_ACCOUNT_ID=your-account-uuid
 ```
 
-The account ID is the UUID of your "Live" group on OptionStrat. After the first login, the session cookie is saved to `.session.json` (gitignored) and reused until it expires.
+The account ID is the UUID of your "Live" group on OptionStrat. After the first login, the session cookie is saved to `data/.session.json` (gitignored) and reused until it expires.
 
 ### Exporting by hand
 
@@ -229,7 +229,7 @@ Job 2 never downloads, and it refuses a CSV more than 90 minutes old, so a faile
 
 | File | Purpose |
 |---|---|
-| `docker/Dockerfile` | Node 24 Alpine image with the AWS CLI and supercronic, for both services |
+| `docker/Dockerfile` | Node 26 Alpine image with the AWS CLI and supercronic, for both services, running as `node` (uid 1000), not root |
 | `docker/compose.yaml` | Runs the container, and the ticket watcher (`spread-book-tickets`) from the same image; `data/` and `reports/` are bind-mounted from `~/spread-book/` on the Docker host, and `SHARED_DIR` from `docker/.env` is mounted at `/app/shared` for the files exchanged with equity-watch |
 | `docker/crontab` | `fetch.sh` at 7:45 AM and 1:25 PM, `publish.sh` at 8:10 AM and 2:10 PM, Mountain, weekdays; and the [paper](#paper-trades) jobs, `paper.js check` every 15 minutes from 7:00 to 1:45 PM and `paper.js snapshot` at 8:08 AM and 2:08 PM |
 | `docker/.env.example` | Template for `docker/.env` (OptionStrat, AWS and tastytrade credentials, the ticket queue, and `SHARED_DIR`) |
@@ -249,6 +249,8 @@ To deploy to a remote Docker host, point the same commands at it. The image is b
 ```bash
 docker -H ssh://user@docker-host compose -f docker/compose.yaml up -d --build
 ```
+
+Each build pulls the newest `node:26-alpine` (`pull: true` in `compose.yaml`), so a rebuild picks up its security fixes. The container runs as uid 1000, so on the Docker host the `data/` and `reports/` directories it mounts, and `SHARED_DIR`, must be writable by uid 1000: `sudo chown -R 1000:1000` them once.
 
 ### AWS
 
@@ -272,7 +274,7 @@ The container is the only publisher. The GitHub Actions workflow was removed bec
 
 `package-lock.json` pins every dependency to an exact version and integrity hash, so installs are reproducible and a tampered package fails verification. Docker uses `npm ci`, which also refuses to run if the lockfile and `package.json` disagree. Review lockfile diffs whenever a dependency is added or upgraded.
 
-`.env`, `docker/.env` and `.session.json` hold credentials and are gitignored. The AWS keys in `docker/.env` are split by job: the publish key (`AWS_*`) can only write the site's bucket and invalidate its cache, and the ticket watcher's (`TICKETS_*`) can only take tickets off spread-scanner's queue and write their results. The tastytrade grant is read-only.
+`.env`, `docker/.env` and `data/.session.json` hold credentials and are gitignored. The AWS keys in `docker/.env` are split by job: the publish key (`AWS_*`) can only write the site's bucket and invalidate its cache, and the ticket watcher's (`TICKETS_*`) can only take tickets off spread-scanner's queue and write their results. The tastytrade grant is read-only.
 
 ## Disclaimer
 

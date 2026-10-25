@@ -8,7 +8,8 @@ const path = require('path');
 const EMAIL = process.env.OPTIONSTRAT_EMAIL;
 const PASSWORD = process.env.OPTIONSTRAT_PASSWORD;
 const ACCOUNT_ID = process.env.OPTIONSTRAT_ACCOUNT_ID;
-const SESSION_FILE = path.join(__dirname, '.session.json');
+// In data/, which the container's user can write (the app directory is root's) and which outlives a rebuild.
+const SESSION_FILE = path.join(__dirname, 'data', '.session.json');
 const BASE_URL = 'https://optionstrat.com';
 const API_HEADERS = { 'Content-Type': 'application/json', 'x-version': '1.9' };
 
@@ -38,6 +39,7 @@ function loadSessionCookie() {
 }
 
 function saveSessionCookie(sid) {
+  fs.mkdirSync(path.dirname(SESSION_FILE), { recursive: true });
   fs.writeFileSync(SESSION_FILE, JSON.stringify({ sid }));
 }
 

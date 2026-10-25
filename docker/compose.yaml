@@ -5,6 +5,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
+      pull: true # fetch the newest node:26-alpine on every build, for its security fixes
     image: spread-book
     container_name: spread-book
     restart: unless-stopped
