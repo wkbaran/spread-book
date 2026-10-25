@@ -95,6 +95,9 @@ Resources:
           TargetOriginId: S3Origin
           ViewerProtocolPolicy: redirect-to-https
           CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          # Managed-SecurityHeadersPolicy: HSTS, nosniff, X-Frame-Options SAMEORIGIN,
+          # Referrer-Policy strict-origin-when-cross-origin. No CSP: the page's scripts are inline.
+          ResponseHeadersPolicyId: 67f7725c-6f97-4210-82d7-5512b31e9d03
           AllowedMethods: [GET, HEAD]
           Compress: true
 
