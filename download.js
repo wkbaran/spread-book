@@ -40,7 +40,9 @@ function loadSessionCookie() {
 
 function saveSessionCookie(sid) {
   fs.mkdirSync(path.dirname(SESSION_FILE), { recursive: true });
-  fs.writeFileSync(SESSION_FILE, JSON.stringify({ sid }));
+  // The session cookie is a login: readable by its owner only. mode applies only when the file is created.
+  fs.writeFileSync(SESSION_FILE, JSON.stringify({ sid }), { mode: 0o600 });
+  fs.chmodSync(SESSION_FILE, 0o600);
 }
 
 async function login() {
