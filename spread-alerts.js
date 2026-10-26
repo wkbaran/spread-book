@@ -19,8 +19,9 @@ const OPTIONSTRAT = /^https:\/\/optionstrat\.com\/[A-Za-z0-9_-]+$/;
 
 // Each spread's OptionStrat link, by spread name, from the spreadsheet download.js saved next to the CSV.
 // The export's Link column is a hyperlink there; the CSV keeps only its text ("Open"). An empty Map when the
-// spreadsheet is missing. The links open the saved trades (quantities included), so they go to equity-watch
-// in the shared file and nowhere public: not the snapshot, the report or latest.json.
+// spreadsheet is missing. The links open the saved trades (quantities and fills included), so they go only where
+// a password guards them: equity-watch's shared file, and the snapshot and report (portfolio.js), since the site
+// went behind basic auth. Not latest.json.
 function optionStratLinks(xlsxFile) {
   const links = new Map();
   if (!fs.existsSync(xlsxFile)) return links;

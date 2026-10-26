@@ -6,6 +6,7 @@ const https    = require('https');
 const { buildPage } = require('./page');
 const { readBetas } = require('./betas');
 const { annotate } = require('./sim');
+const { optionStratLinks } = require('./spread-alerts');
 
 // --paper: a snapshot of paper trades (paper.js), written to reports/paper/ and marked as paper, so it never joins
 // the real book's history, latest.json or the stop alerts, which read reports/ only.
@@ -192,6 +193,12 @@ async function fetchCurrentPrices(underlyings) {
     ? `Betas: ${Object.values(betas).filter(b => b !== null).length}/${underlyings.length} underlyings (as of ${betaFile.asOf})`
     : 'Betas: no file from equity-watch');
 
+  // Each spread's saved trade in OptionStrat, from the spreadsheet beside the CSV (none for a paper snapshot).
+  // The site is behind basic auth, so the snapshot and the report may carry them; latest.json still doesn't.
+  let links = new Map();
+  try { links = optionStratLinks(csvFile.replace(/\.csv$/, '.xlsx')); }
+  catch (e) { console.warn('WARN: OptionStrat links unreadable:', e.message); }
+
   const snapshot = {
     generatedAt: snapshotTime.toISOString(),
     source:      path.basename(csvFile),
@@ -219,6 +226,7 @@ async function fetchCurrentPrices(underlyings) {
       iv:         s.iv,
       tgRatio:    s.tgRatio,
       tvRatio:    s.tvRatio,
+      optionStratUrl: links.get(s.name.trim()),
     })),
   };
 

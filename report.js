@@ -184,10 +184,12 @@
     const hot = !!p.exit;
     const status = p.exit === "close" ? "Past the close target" : p.exit === "stop" ? "At the stop" : p.returnPct >= 0 ? `of max profit. Close at ${TARGET}%` : `of max loss. Stop at ${STOP}%`;
     const sameCell = all().filter((o) => o !== p && o.underlying === p.underlying && o.kind === p.kind && o.expiration === p.expiration);
-    const osUrl = SB.optionStratUrl(p);
+    // The saved trade, with its fills, when the export had one; else the same strikes in the builder, at today's prices.
+    const osUrl = p.optionStratUrl || SB.optionStratUrl(p);
+    const osTitle = p.optionStratUrl ? "Open your saved trade in OptionStrat" : "Open this spread in OptionStrat's builder, at today's prices";
     const partner = p.condor ? all().find((o) => o.underlying === p.underlying && o.expiration === p.expiration && o.kind !== p.kind) : null;
     $("detail").innerHTML = `
-      <h3>${osUrl ? `<a href="${esc(osUrl)}" target="optionstrat" rel="noopener" title="Open this spread in OptionStrat">${esc(p.underlying)} ${esc(p.strikes)}</a>` : `${esc(p.underlying)} ${esc(p.strikes)}`}</h3>
+      <h3>${osUrl ? `<a href="${esc(osUrl)}" target="optionstrat" rel="noopener" title="${osTitle}">${esc(p.underlying)} ${esc(p.strikes)}</a>` : `${esc(p.underlying)} ${esc(p.strikes)}`}</h3>
       <div class="d-sub">${esc(p.type)} spread, expires ${expLabel(p.expiration)} (${p.dte} days)${p.hypo ? ". Trial trade, not in the book" : ""}</div>
       ${partner ? `<div class="also">Iron condor with the ${esc(partner.strikes)} ${partner.kind} spread <button type="button" data-id="${partner.id}">Show</button></div>` : ""}
       ${sameCell.length ? `<div class="also">Same cell: ${sameCell.map((o) => `<button type="button" data-id="${o.id}">${esc(o.strikes)}</button>`).join("")}</div>` : ""}

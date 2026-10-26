@@ -106,6 +106,15 @@ test('the detail title opens the spread in OptionStrat, in its own named tab', a
   assert.equal(a.getAttribute('target'), 'optionstrat');
 });
 
+test('a spread with a saved trade links the detail title to it instead of the builder', async (t) => {
+  const snap = snapshot();
+  snap.positions[0].optionStratUrl = 'https://optionstrat.com/AbC123xyz';
+  const p = await open(t, snap);
+  p.click(p.$$('#sc tbody tr').find((r) => r.textContent.includes('235/240')));
+  assert.equal(p.$('#detail h3 a').getAttribute('href'), 'https://optionstrat.com/AbC123xyz');
+  assert.match(p.$('#detail h3 a').getAttribute('title'), /saved trade/);
+});
+
 test('the iron condor legs link to each other', async (t) => {
   const p = await open(t);
   const row = p.$$('#sc tbody tr').find((r) => r.textContent.includes('235/240'));
