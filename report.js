@@ -184,9 +184,10 @@
     const hot = !!p.exit;
     const status = p.exit === "close" ? "Past the close target" : p.exit === "stop" ? "At the stop" : p.returnPct >= 0 ? `of max profit. Close at ${TARGET}%` : `of max loss. Stop at ${STOP}%`;
     const sameCell = all().filter((o) => o !== p && o.underlying === p.underlying && o.kind === p.kind && o.expiration === p.expiration);
+    const osUrl = SB.optionStratUrl(p);
     const partner = p.condor ? all().find((o) => o.underlying === p.underlying && o.expiration === p.expiration && o.kind !== p.kind) : null;
     $("detail").innerHTML = `
-      <h3>${esc(p.underlying)} ${esc(p.strikes)}</h3>
+      <h3>${osUrl ? `<a href="${esc(osUrl)}" target="optionstrat" rel="noopener" title="Open this spread in OptionStrat">${esc(p.underlying)} ${esc(p.strikes)}</a>` : `${esc(p.underlying)} ${esc(p.strikes)}`}</h3>
       <div class="d-sub">${esc(p.type)} spread, expires ${expLabel(p.expiration)} (${p.dte} days)${p.hypo ? ". Trial trade, not in the book" : ""}</div>
       ${partner ? `<div class="also">Iron condor with the ${esc(partner.strikes)} ${partner.kind} spread <button type="button" data-id="${partner.id}">Show</button></div>` : ""}
       ${sameCell.length ? `<div class="also">Same cell: ${sameCell.map((o) => `<button type="button" data-id="${o.id}">${esc(o.strikes)}</button>`).join("")}</div>` : ""}
@@ -303,7 +304,7 @@
     const m = SB.plotModel(list);
     if (!m) { $("plot").innerHTML = `<p class="plot-note">No spread has both gamma and vega, so there's nothing to plot.</p>`; return; }
     const { px, py, xMax, yMax, mx, my, xTicks: xt, yTicks: yt } = m;
-    const W = 640, H = 300, pad = { l: 44, r: 16, t: 14, b: 36 };
+    const W = 960, H = 320, pad = { l: 44, r: 16, t: 14, b: 36 };
     const x = (v) => pad.l + (v / xMax) * (W - pad.l - pad.r), y = (v) => H - pad.b - (v / yMax) * (H - pad.t - pad.b);
     // Labels try right, left, above, then below the dot, taking the first spot that is free.
     const boxes = list.map((p) => ({ x0: x(px(p)) - 7, x1: x(px(p)) + 7, y0: y(py(p)) - 7, y1: y(py(p)) + 7 }));
@@ -313,13 +314,18 @@
     const dots = list.map((p) => {
       const name = twice.has(p.underlying) ? `${p.underlying} ${p.kind}` : p.underlying;
       const cx = x(px(p)), cy = y(py(p)), w = name.length * 7 + 2;
-      const spots = [[cx + 8, cy + 4, "start"], [cx - 8, cy + 4, "end"], [cx, cy - 10, "middle"], [cx, cy + 18, "middle"]];
+      const o = p.id === selected ? 15 : 8; // clear of the selected dot's halo
+      const spots = [[cx + o, cy + 4, "start"], [cx - o, cy + 4, "end"], [cx, cy - o - 2, "middle"], [cx, cy + o + 10, "middle"]];
       const box = ([lx, ly, a]) => { const x0 = a === "start" ? lx : a === "end" ? lx - w : lx - w / 2; return { x0, x1: x0 + w, y0: ly - 10, y1: ly + 2 }; };
       const spot = spots.find((sp) => !hits(box(sp))) ?? spots[0];
       boxes.push(box(spot));
       const unmeasured = m.unmeasured(p), weak = m.weak(p);
-      return `<g><circle class="dot ${weak ? "weak" : ""} ${p.hypo ? "hypo" : ""} ${p.id === selected ? "sel" : ""}" data-id="${p.id}" cx="${cx}" cy="${cy}" r="${p.id === selected ? 7 : 5}" tabindex="0" role="button" aria-label="${esc(p.name)}"><title>${esc(p.name)}${unmeasured ? ` (no ${p.tg === null ? "gamma" : "vega"}, plotted at 0)` : ""}</title></circle><text class="lbl" x="${spot[0]}" y="${spot[1]}" text-anchor="${spot[2]}">${esc(name)}</text></g>`;
-    }).join("");
+      const halo = p.id === selected ? `<circle class="halo" cx="${cx}" cy="${cy}" r="12"/>` : "";
+      return `<g${p.id === selected ? ` class="sel"` : ""}>${halo}<circle class="dot ${weak ? "weak" : ""} ${p.hypo ? "hypo" : ""} ${p.id === selected ? "sel" : ""}" data-id="${p.id}" cx="${cx}" cy="${cy}" r="${p.id === selected ? 7 : 5}" tabindex="0" role="button" aria-label="${esc(p.name)}"><title>${esc(p.name)}${unmeasured ? ` (no ${p.tg === null ? "gamma" : "vega"}, plotted at 0)` : ""}</title></circle><text class="lbl" x="${spot[0]}" y="${spot[1]}" text-anchor="${spot[2]}">${esc(name)}</text></g>`;
+    });
+    // The selected spread goes last, so it is drawn over any dot or label next to it.
+    const at = list.findIndex((p) => p.id === selected);
+    if (at >= 0) dots.push(dots.splice(at, 1)[0]);
     $("plot").innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Theta per gamma against theta per vega for each spread">
       <rect class="zone" x="${pad.l}" y="${y(my)}" width="${x(mx) - pad.l}" height="${H - pad.b - y(my)}" rx="3"/>
       <text x="${pad.l + 6}" y="${H - pad.b - 8}">below median on both</text>
@@ -331,7 +337,7 @@
       ${yt.map((v) => `<text x="${pad.l - 8}" y="${y(v) + 4}" text-anchor="end">${v.toFixed(1)}</text>`).join("")}
       <text x="${W - pad.r}" y="${H - 4}" text-anchor="end">theta per unit gamma</text>
       <text transform="translate(10 ${(pad.t + H - pad.b) / 2}) rotate(-90)" text-anchor="middle">theta per unit vega</text>
-      ${dots}</svg>`;
+      ${dots.join("")}</svg>`;
   }
   $("plot").addEventListener("click", (e) => { const d = e.target.closest(".dot"); if (d) select(d.dataset.id); });
   $("plot").addEventListener("keydown", (e) => { const d = e.target.closest(".dot"); if (d && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); select(d.dataset.id); } });

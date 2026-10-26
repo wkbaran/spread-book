@@ -87,6 +87,25 @@ test('a heatmap cell with two spreads says so, and selecting a cell shows that s
   assert.match(p.text('#detail .also'), /Same cell/);
 });
 
+test('selecting a spread rings its dot on the chart and draws it last', async (t) => {
+  const p = await open(t);
+  const row = p.$$('#sc tbody tr').find((r) => r.textContent.includes('400/405'));
+  p.click(row);
+  const sel = p.$$('#plot .dot.sel');
+  assert.equal(sel.length, 1);
+  assert.equal(sel[0].dataset.id, row.dataset.id);
+  assert.equal(p.$$('#plot .halo').length, 1);
+  assert.equal(p.$$('#plot svg > g').at(-1).querySelector('.dot').dataset.id, row.dataset.id);
+});
+
+test('the detail title opens the spread in OptionStrat, in its own named tab', async (t) => {
+  const p = await open(t);
+  p.click(p.$$('#sc tbody tr').find((r) => r.textContent.includes('235/240')));
+  const a = p.$('#detail h3 a');
+  assert.equal(a.getAttribute('href'), 'https://optionstrat.com/build/bull-put-spread/AAPL/.AAPL260417P235,-.AAPL260417P240');
+  assert.equal(a.getAttribute('target'), 'optionstrat');
+});
+
 test('the iron condor legs link to each other', async (t) => {
   const p = await open(t);
   const row = p.$$('#sc tbody tr').find((r) => r.textContent.includes('235/240'));

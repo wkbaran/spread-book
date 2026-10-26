@@ -324,6 +324,21 @@
     }
   }
 
+  // The spread in OptionStrat's builder, the same link spread-scanner makes (optionStratUrl in its web/model.js):
+  // the strategy, the underlying, then the leg bought and the leg sold (leading minus), each as a dot, the root,
+  // YYMMDD, P or C and the strike. One contract, never the export's saved trade (that link stays private).
+  // null for a spread that isn't a plain bull put or bear call, or a symbol that isn't a letters-only root.
+  function optionStratUrl(p) {
+    const legs = p.strikes.split("/").map(Number);
+    if (p.kind === "other" || !/^[A-Z]{1,6}$/.test(p.underlying) || legs.length !== 2 || !legs.every((k) => k > 0)) return null;
+    const lo = Math.min(...legs), hi = Math.max(...legs);
+    const [long, short] = p.kind === "put" ? [lo, hi] : [hi, lo];
+    const [yyyy, mm, dd] = p.expiration.split("-");
+    const leg = (k) => `.${p.underlying}${yyyy.slice(2)}${mm}${dd}${p.kind === "put" ? "P" : "C"}${k}`;
+    const strategy = p.kind === "put" ? "bull-put-spread" : "bear-call-spread";
+    return `https://optionstrat.com/build/${strategy}/${p.underlying}/${leg(long)},-${leg(short)}`;
+  }
+
   // One spread across snapshots: the same name, expiration and strikes.
   const spreadKey = (p) => [p.name, p.expiration, p.strikes].join("|");
 
@@ -407,7 +422,7 @@
     return { open, closed };
   }
 
-  const api = { RULES, isoDate, fromDenver, takenAt, enrich, tagCondors, decide, showsFromHere, planRows, recoveryRows, spreadKey, findSpread, history,
+  const api = { RULES, isoDate, fromDenver, takenAt, enrich, tagCondors, decide, showsFromHere, planRows, recoveryRows, spreadKey, findSpread, optionStratUrl, history,
     sumOf, median, counts, addUp, heatmap, rank, plotModel, sortSpreads, bookTotals, parseTrade, tryTrade, readTry };
   if (typeof module === "object" && module.exports) module.exports = api;
   else globalThis.SpreadBook = api;

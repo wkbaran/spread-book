@@ -74,17 +74,18 @@ function buildPage(snapshot, basename) {
     </div>
 
     <section class="quality">
-      <div>
-        <div class="section-head">
-          <h2 class="section-title">What each spread pays for its risk</h2>
-        </div>
-        <div class="plot" id="plot"></div>
+      <div class="section-head">
+        <h2 class="section-title">What each spread pays for its risk</h2>
       </div>
-      <div class="q-notes">
-        <p><strong>Right</strong> means more theta for each unit of gamma. These hold up better through a sharp move.</p>
-        <p><strong>Up</strong> means more theta for each unit of vega. These hold up better through an IV spike.</p>
-        <p>The shaded corner is below the median on both. Those spreads are the first to close when you want capital back.</p>
-      </div>
+      <div class="plot" id="plot"></div>
+      <details class="guide">
+        <summary>How to read the graph</summary>
+        <dl>
+          <dt>Right</dt><dd>More theta for each unit of gamma. These hold up better through a sharp move.</dd>
+          <dt>Up</dt><dd>More theta for each unit of vega. These hold up better through an IV spike.</dd>
+          <dt>Shaded corner</dt><dd>Below the median on both. Those spreads are the first to close when you want capital back.</dd>
+        </dl>
+      </details>
     </section>
 
     <section class="scorecard">

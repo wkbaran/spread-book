@@ -431,3 +431,17 @@ test('findSpread: the spread a ?spread= link names, with or without equity-watch
   assert.equal(SB.findSpread(list, ''), null);
   assert.equal(SB.findSpread(list, null), null);
 });
+
+test('optionStratUrl: the builder link spread-scanner makes, bought leg first, sold leg with a minus', () => {
+  const list = book();
+  assert.equal(SB.optionStratUrl(by(list, 'AAPL Apr 17th 235/240 Bull')),
+    'https://optionstrat.com/build/bull-put-spread/AAPL/.AAPL260417P235,-.AAPL260417P240');
+  assert.equal(SB.optionStratUrl(by(list, 'AMD')),
+    'https://optionstrat.com/build/bear-call-spread/AMD/.AMD260424C235,-.AMD260424C230');
+  assert.equal(SB.optionStratUrl(by(list, 'CSCO')),
+    'https://optionstrat.com/build/bull-put-spread/CSCO/.CSCO260410P67.5,-.CSCO260410P72.5');
+  const other = SB.enrich({ ...pos('AAPL Apr 17th 235/240 Iron Butterfly') }, snapshot());
+  assert.equal(SB.optionStratUrl(other), null);
+  const odd = SB.enrich({ ...pos('BRK/B Apr 17th 400/405 Bull Put Spread'), underlying: 'BRK/B' }, snapshot());
+  assert.equal(SB.optionStratUrl(odd), null);
+});
