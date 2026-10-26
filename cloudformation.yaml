@@ -1,8 +1,8 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   Spread Book — static report hosting.
-  S3 bucket (private) + CloudFront (HTTPS) + IAM user for the Docker deployment,
-  which is the only publisher.
+  S3 bucket (private) + CloudFront (HTTPS, optional basic auth) + IAM user for
+  the Docker deployment, which is the only publisher.
   IMPORTANT: Deploy this stack in us-east-1. ACM certificates used by
   CloudFront must live in us-east-1 regardless of where your bucket is.
 
@@ -19,6 +19,29 @@ Parameters:
   HostedZoneId:
     Type: AWS::Route53::HostedZone::Id
     Description: Route 53 hosted zone that contains DomainName
+
+  EnableBasicAuth:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['false', 'true']
+    Description: Put a username/password prompt in front of the whole site.
+
+  BasicAuthUser:
+    Type: String
+    Default: ''
+    Description: Username the browser will prompt for (only with EnableBasicAuth=true).
+
+  BasicAuthPassword:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: >
+      Password the browser will prompt for (only with EnableBasicAuth=true; use 12+
+      characters). It is embedded in the CloudFront Function code, so anyone with
+      CloudFront console access to this account can read it.
+
+Conditions:
+  HasBasicAuth: !Equals [!Ref EnableBasicAuth, 'true']
 
 Resources:
 
@@ -73,6 +96,35 @@ Resources:
         - DomainName: !Ref DomainName
           HostedZoneId: !Ref HostedZoneId
 
+  # -- Basic auth (EnableBasicAuth) --------------------------------------------
+  # The same function as equity-watch's and spread-scanner's stacks, copied rather than shared.
+
+  BasicAuthFunction:
+    Type: AWS::CloudFront::Function
+    Condition: HasBasicAuth
+    Properties:
+      Name: !Sub '${BucketName}-basic-auth'
+      AutoPublish: true
+      FunctionConfig:
+        Comment: Basic auth for the spread book report
+        Runtime: cloudfront-js-2.0
+      FunctionCode: !Sub
+        - |
+          function handler(event) {
+            var auth = event.request.headers.authorization;
+            if (auth && auth.value === 'Basic ${Expected}') {
+              return event.request;
+            }
+            return {
+              statusCode: 401,
+              statusDescription: 'Unauthorized',
+              headers: { 'www-authenticate': { value: 'Basic realm="spread-book"' } }
+            };
+          }
+        # Long form: YAML allows only one tag per node, so `!Base64 !Sub` is invalid.
+        - Expected:
+            Fn::Base64: !Sub '${BasicAuthUser}:${BasicAuthPassword}'
+
   # -- CloudFront Distribution -------------------------------------------------
 
   # Created before the bucket policy, which names it. On a fresh stack the site serves 403s
@@ -102,6 +154,11 @@ Resources:
           ResponseHeadersPolicyId: 67f7725c-6f97-4210-82d7-5512b31e9d03
           AllowedMethods: [GET, HEAD]
           Compress: true
+          FunctionAssociations: !If
+            - HasBasicAuth
+            - - EventType: viewer-request
+                FunctionARN: !GetAtt BasicAuthFunction.FunctionMetadata.FunctionARN
+            - !Ref AWS::NoValue
 
         CustomErrorResponses:
           - ErrorCode: 403

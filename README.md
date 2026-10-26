@@ -262,6 +262,8 @@ aws cloudformation deploy --region us-east-1 --stack-name spread-book \
   --parameter-overrides BucketName=your-bucket DomainName=reports.example.com HostedZoneId=Z0123456789ABC
 ```
 
+To put a username and password in front of the whole site, add `EnableBasicAuth=true BasicAuthUser=... BasicAuthPassword=...` (12 or more characters; keep them in the gitignored `.env` as `BASIC_AUTH_USER` and `BASIC_AUTH_PASSWORD`). A CloudFront Function checks every request, the same one equity-watch and spread-scanner use. The password is written into the function's code, so anyone with CloudFront console access to the account can read it. Pass all three on every later deploy: leaving `EnableBasicAuth` out turns the prompt off.
+
 The user's access key is created outside the stack, so the secret never appears in stack outputs:
 
 ```bash
