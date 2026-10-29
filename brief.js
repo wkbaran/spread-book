@@ -139,7 +139,7 @@ const brief = {
   schema:      'spread-book/brief@1',
   generatedAt: takenAt(snap),
   source:      snap.source,
-  about:       'Open credit spreads on OptionStrat, analysed against fixed exit rules. Positions are pulled at about 7:45 AM and 1:25 PM America/Denver on weekdays and the report is published at about 8:10 AM and 2:10 PM. Paths are relative to this file. Not investment advice; confirm with the broker before acting.',
+  about:       'Open credit spreads on OptionStrat, analysed against fixed exit rules. Positions are pulled at about 7:45 AM and 1:25 PM America/Denver on weekdays and the report is published at about 8:10 AM and 1:27 PM. Paths are relative to this file. Not investment advice; confirm with the broker before acting.',
   links: {
     report:    base + '-portfolio.html',
     positions: base + '-portfolio.json',

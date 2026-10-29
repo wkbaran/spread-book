@@ -2,14 +2,17 @@
 # Job 1: pull the OptionStrat data and list the tickers for equity-watch's beta job.
 45 7  * * 1-5  /app/fetch.sh
 25 13 * * 1-5  /app/fetch.sh
-# Job 2: build and publish the report from that data. equity-watch runs its beta job at
-# 08:05 and 14:05 (about a minute at its throttled rate), so these follow it by a few minutes.
-# If either time moves, move the other, and keep the gap under report.sh's 90-minute limit.
+# Job 2: build and publish the report from that data. In the morning equity-watch runs its beta job
+# at 08:05 (about a minute at its throttled rate), so 08:10 follows it by a few minutes; if either
+# moves, move the other, and keep the gap under report.sh's 90-minute limit. The afternoon run follows
+# the 13:25 fetch straight away, so the page is up with time to act before the 14:00 close. It uses the
+# morning's betas (good for betaMaxAgeDays); waiting for equity-watch's 14:05 job would land after the close.
 10 8  * * 1-5  /app/publish.sh
-10 14 * * 1-5  /app/publish.sh
+27 13 * * 1-5  /app/publish.sh
 # Paper trades (paper.js), kept apart from the real book in reports/paper/. check fills resting profit targets
 # from live quotes every 15 minutes through the session (7:30 to 14:00 here; it does nothing outside it, or
-# with no open paper trades). snapshot marks the paper book just before each publish, which uploads it, and
-# after equity-watch's beta job (08:05 and 14:05, about a minute), which fetch.sh gives the paper symbols too.
+# with no open paper trades). snapshot marks the paper book just before each publish, which uploads it; the
+# morning one after equity-watch's beta job (08:05, about a minute), which fetch.sh gives the paper symbols too.
 */15 7-13 * * 1-5  cd /app && node paper.js check
-8 8,14 * * 1-5  cd /app && node paper.js snapshot
+8 8  * * 1-5  cd /app && node paper.js snapshot
+26 13 * * 1-5  cd /app && node paper.js snapshot

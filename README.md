@@ -147,7 +147,7 @@ In the container, run them with `docker compose -f docker/compose.yaml exec spre
 - **Stop alerts:** each paper snapshot writes `shared/paper-spread-alerts.json` for equity-watch, the same as the real book's file but marked `book: "paper"` with every key prefixed `paper:`. equity-watch watches those stops apart from the real ones and tags them *paper*. Because the ledger records every close, a paper book with nothing open writes an empty file, which cancels the paper stops.
 - **Betas:** `fetch.sh` adds the open paper trades' stocks to the ticker list for equity-watch's beta job, so paper spreads get betas too.
 - **Expiration:** a trade still open the day after it expires closes at what it is worth at the stock's price then. That's approximate, and shouldn't happen if the 21-day exit is kept.
-- **Snapshots** (8:08 and 2:08, after equity-watch's beta job and before each publish) write the open trades as rows of the OptionStrat export (`data/paper/paper-<stamp>.csv`) and run `portfolio.js --paper` on them, so the exit plans and "from here" odds work as they do for the real book. When any open trade has no quotes, no snapshot is written: a spread left out would read as closed.
+- **Snapshots** (8:08 AM, after equity-watch's beta job, and 1:26 PM, each just before a publish) write the open trades as rows of the OptionStrat export (`data/paper/paper-<stamp>.csv`) and run `portfolio.js --paper` on them, so the exit plans and "from here" odds work as they do for the real book. When any open trade has no quotes, no snapshot is written: a spread left out would read as closed.
 - **The ledger** is `data/paper/ledger.json`, private like the rest of `data/`. It is written only through `paper.js` (its commands and the ticket watcher, below), under a lock (`data/paper/.lock`), and atomically.
 
 ### The Paper trade button: tickets from spread-scanner
@@ -219,19 +219,19 @@ The page tests check what the page draws, not how it looks: colours, layout and 
 The `docker/` directory publishes to the S3 bucket and CloudFront site described under [AWS](#aws) as two scheduled jobs, with equity-watch's beta job between them:
 
 1. **`fetch.sh`** at 7:45 AM and 1:25 PM: downloads the open spreads from OptionStrat and writes `shared/underlyings.txt`.
-2. **equity-watch's beta job**, in its own container at 8:05 AM and 2:05 PM: reads that list and writes `shared/betas.json`.
-3. **`paper.js snapshot`** at 8:08 AM and 2:08 PM: marks the [paper book](#paper-trades) and builds `reports/paper/`. It does nothing without open paper trades.
-4. **`publish.sh`** at 8:10 AM and 2:10 PM: builds the report from the CSV job 1 left, reads the betas, and uploads it and the paper book.
+2. **equity-watch's beta job**, in its own container at 8:05 AM (and 2:05 PM, which the afternoon publish does not wait for): reads that list and writes `shared/betas.json`.
+3. **`paper.js snapshot`** at 8:08 AM and 1:26 PM: marks the [paper book](#paper-trades) and builds `reports/paper/`. It does nothing without open paper trades.
+4. **`publish.sh`** at 8:10 AM and 1:27 PM: builds the report from the CSV job 1 left, reads the betas, and uploads it and the paper book. The afternoon report is up about half an hour before the close, so there is time to adjust positions; it uses the morning's betas.
 
 `paper.js check` runs every 15 minutes through the session to fill the paper book's resting profit targets. A second service from the same image, `spread-book-tickets`, runs the [ticket watcher](#the-paper-trade-button-tickets-from-spread-scanner) all the time.
 
-Job 2 never downloads, and it refuses a CSV more than 90 minutes old, so a failed download can't republish an old export as new. A missing or old `betas.json` doesn't stop the report. The snapshot records when the betas were computed. Prices (and so the strike distance) are fetched when job 2 runs, 25 to 45 minutes after the positions; the snapshot records when as `spotsAsOf`.
+Job 2 never downloads, and it refuses a CSV more than 90 minutes old, so a failed download can't republish an old export as new. A missing or old `betas.json` doesn't stop the report. The snapshot records when the betas were computed. Prices (and so the strike distance) are fetched when job 2 runs, 25 minutes after the positions in the morning and 2 in the afternoon; the snapshot records when as `spotsAsOf`.
 
 | File | Purpose |
 |---|---|
 | `docker/Dockerfile` | Node 26 Alpine image with the AWS CLI and supercronic, for both services, running as `node` (uid 1000), not root |
 | `docker/compose.yaml` | Runs the container, and the ticket watcher (`spread-book-tickets`) from the same image; `data/` and `reports/` are bind-mounted from `~/spread-book/` on the Docker host, and `SHARED_DIR` from `docker/.env` is mounted at `/app/shared` for the files exchanged with equity-watch |
-| `docker/crontab` | `fetch.sh` at 7:45 AM and 1:25 PM, `publish.sh` at 8:10 AM and 2:10 PM, Mountain, weekdays; and the [paper](#paper-trades) jobs, `paper.js check` every 15 minutes from 7:00 to 1:45 PM and `paper.js snapshot` at 8:08 AM and 2:08 PM |
+| `docker/crontab` | `fetch.sh` at 7:45 AM and 1:25 PM, `publish.sh` at 8:10 AM and 1:27 PM, Mountain, weekdays; and the [paper](#paper-trades) jobs, `paper.js check` every 15 minutes from 7:00 to 1:45 PM and `paper.js snapshot` at 8:08 AM and 1:26 PM |
 | `docker/.env.example` | Template for `docker/.env` (OptionStrat, AWS and tastytrade credentials, the ticket queue, and `SHARED_DIR`) |
 
 The container runs with `TZ=America/Denver`, so the crontab is in local time and DST is handled automatically. The bind-mounted directories persist between runs, so `daily-pnl.js` always has an earlier snapshot to compare against.
